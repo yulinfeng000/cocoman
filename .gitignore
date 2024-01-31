@@ -1,0 +1,7 @@
+chromo_data
+*.so
+dist
+build
+*.egg-info
+__pycache__
+*.pyc
