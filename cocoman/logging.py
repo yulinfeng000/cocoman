@@ -15,10 +15,6 @@ logging.config.dictConfig(
                 "formatter": "standard",
             }
         },
-        "root": {
-            "handlers": ["console"],
-            "level": "INFO",
-        },
         "loggers": {"cocoman": {"handlers": ["console"], "level": "INFO"}},
     }
 )

@@ -11,7 +11,9 @@ from cocoman.settings import (
     MINIO_URL,
     MINIO_SSL,
     DB_URL,
+    DB_POOL_SIZE,
 )
+
 import argparse
 from tqdm import tqdm
 import logging
@@ -62,7 +64,6 @@ def upload(coco: LocalCOCO, engine: Engine, minio: Minio):
                     ) is None:
                         session.add(cat)
                         session.flush()
-                        session.refresh(cat)
                     else:
                         cat = result[0]
 
@@ -152,8 +153,8 @@ def get_args():
 
 
 def cmd_entrypoint(args):
-    engine = create_engine(args.db_url)
-    
+    engine = create_engine(args.db_url, pool_size=DB_POOL_SIZE)
+
     minio = Minio(
         args.minio_url,
         access_key=args.minio_access_key,

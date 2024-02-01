@@ -15,7 +15,7 @@ class Base(DeclarativeBase):
                     attrs.append(f"{key}={value}")
 
         repr_str = ", ".join(attrs)
-        return f"<{self.__class__.__name__}({repr_str})"
+        return f"<{self.__class__.__name__}({repr_str})>"
 
 
 class Image(Base):

@@ -1,21 +1,24 @@
+import os
+from typing import Any, List
+from contextlib import contextmanager
 import itertools
-from typing import Any,List
 import sqlalchemy as sq
 from sqlalchemy import Engine
 from minio import Minio
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer, sessionmaker, scoped_session
 from sqlalchemy.sql import *
 from collections import defaultdict
 from cocoman.tables import Image, DataSet, Annotation, Category, Base
 from cocoman.utils import array_sample, loadRLE
 from pycocotools import mask as coco_mask
+import logging
 
-
+logger = logging.getLogger("cocoman.mycoco.remote_coco")
 {
     "20230804-seg-coco": {
         "train": {"select-policy": {"type": "random", "nums": 1000}},
-        "val": {"select-policy": {"type": "index", "ids": [1, 3, 4, 57, 4, 6, 9]}},
-        "": {"select-policy": {"type": "random", "nums": 123123}},
+        "val": {"select-policy": {"type": "all"}},
+        "": {"select-policy": {"type": "index", "ids": 123123}},
     }
 }
 
@@ -33,12 +36,18 @@ def get_images_by_config(dataset: str, subset: str, config: dict, session: Sessi
             stmt = select(array_sample(DataSet.image_ids, policy["nums"])).where(
                 and_(DataSet.dataset_name == dataset, DataSet.dataset_type == subset)
             )
-            imgIds = session.execute(stmt).scalar()
+            imgIds = session.scalar(stmt)
             if not imgIds:
                 raise Exception("not found")
             return imgIds
         elif policy_type == "index":
             return policy["ids"]
+        elif policy_type == "all":
+            stmt = select(DataSet.image_ids).where(
+                and_(DataSet.dataset_name == dataset, DataSet.dataset_type == subset)
+            )
+            imgIds = session.scalar(stmt)
+            return imgIds
         else:
             raise NotImplementedError(f"policy type {policy_type} not implemented")
 
@@ -54,29 +63,43 @@ def get_images_by_config(dataset: str, subset: str, config: dict, session: Sessi
             return imgIds
         elif policy_type == "index":
             return policy["ids"]
+        elif policy_type == "all":
+            stmt = select(Image.id).where(Image.bucket_name == dataset)
+            imgIds = session.scalars(stmt).all()
+            return imgIds
         else:
             raise NotImplementedError(f"policy type {policy_type} not implemented")
 
 
 class RemoteCOCO:
-
-    disabled = ['showAnns','loadRes','download','loadNumpyAnnotations']
+    disabled = ["showAnns", "loadRes", "loadNumpyAnnotations"]
 
     def __getattr__(self, __name: str) -> Any:
         if __name in self.disabled:
-            raise AttributeError('no such attr')
+            raise AttributeError("no such attr")
         return super().__getattr__(__name)
 
     def __init__(self, db: Engine, minio: Minio, config: dict):
         self.db = db
+        self.sessionmaker = sessionmaker(bind=db)
         self.minio = minio
         self.config = config
         self.create_index()
 
+    @contextmanager
+    def ScopedSession(self):
+        with scoped_session(self.sessionmaker)() as session:
+            yield session
+
+    @contextmanager
+    def Session(self):
+        with self.sessionmaker() as session:
+            yield session
+
     def create_index(self):
         self.imgToAnns, self.catToImgs = defaultdict(list), defaultdict(list)
         self.imgs = []
-        with Session(self.db) as session:
+        with self.ScopedSession() as session:
             for dataset_name, select_config in self.config.items():
                 for subset, config in select_config.items():
                     self.imgs.extend(
@@ -99,7 +122,7 @@ class RemoteCOCO:
             )
             self.cats = session.scalars(stmt).all()
 
-    def getAnnIds(self, imgIds=[], catIds=[], areaRng=[], iscrowd=None)->List[int]:
+    def getAnnIds(self, imgIds=[], catIds=[], areaRng=[], iscrowd=None) -> List[int]:
         """
         Get ann ids that satisfy given filter conditions. default skips that filter
         :param imgIds  (int array)     : get anns for given imgs
@@ -122,7 +145,7 @@ class RemoteCOCO:
             anns = list(itertools.chain.from_iterable(lists))
             return anns
 
-        with Session(self.db) as session:
+        with self.ScopedSession() as session:
             stmt = select(Annotation.id)
             where_conditions = []
             if len(catIds) != 0:
@@ -130,7 +153,7 @@ class RemoteCOCO:
 
             if len(areaRng) != 0:
                 where_conditions.append(
-                    Annotation.area > areaRng[0], Annotation.area <= areaRng[1]
+                    and_(Annotation.area > areaRng[0], Annotation.area <= areaRng[1])
                 )
 
             if iscrowd:
@@ -138,7 +161,7 @@ class RemoteCOCO:
             stmt = stmt.where(and_(*where_conditions))
             return session.scalars(stmt).all()
 
-    def getCatIds(self, catNms=[], supNms=[], catIds=[])->List[int]:
+    def getCatIds(self, catNms=[], supNms=[], catIds=[]) -> List[int]:
         """
         filtering parameters. default skips that filter.
         :param catNms (str array)  : get cats for given cat names
@@ -153,21 +176,21 @@ class RemoteCOCO:
         if len(catNms) == len(supNms) == len(catIds) == 0:
             return self.cats
 
-        with Session(self.db) as session:
+        with self.ScopedSession() as session:
             stmt = select(Category.id)
             where_conditions = []
 
             if len(catNms) != 0:
-                where_conditions.append(Category.name in catNms)
+                where_conditions.append(Category.name.in_(catNms))
 
             if len(supNms) != 0:
-                where_conditions.append(Category.super_category in supNms)
+                where_conditions.append(Category.super_category.in_(supNms))
 
             stmt = stmt.where(and_(*where_conditions))
 
             return session.scalars(stmt).all()
 
-    def getImgIds(self, imgIds=[], catIds=[])->List[int]:
+    def getImgIds(self, imgIds=[], catIds=[]) -> List[int]:
         """
         Get img ids that satisfy given filter conditions.
         :param imgIds (int array) : get imgs for given ids
@@ -187,39 +210,64 @@ class RemoteCOCO:
                     ids = set(self.catToImgs[catId])
                 else:
                     ids &= set(self.catToImgs[catId])
-            return list(ids)
+        return list(ids)
 
-    def _loadByType(self, type_cls: Base, ids=[]):
-        stmt = select(type_cls)
+    def _loadByType(self, type_cls: Base, ids=[], options=None):
+        stmt: Select = select(type_cls)
         if _isArrayLike(ids):
             stmt = stmt.where(type_cls.id.in_(ids))
         else:
             stmt = stmt.where(type_cls.id == ids)
 
-        with Session(self.db) as session:
+        with self.ScopedSession() as session:
             return session.scalars(stmt).all()
 
-    def loadAnns(self, ids=[])->List[Annotation]:
-        return self._loadByType(Annotation, ids)
+    @contextmanager
+    def loadAnns(self, ids=[]) -> List[Annotation]:
+        """
+        和标准使用方法不一样,由于segmentation是deferred,所以需要确保在session环境中
+        """
+        stmt = select(Annotation)
+        if _isArrayLike(ids):
+            stmt = stmt.where(Annotation.id.in_(ids))
+        else:
+            stmt = stmt.where(Annotation.id == ids)
 
-    def loadImgs(self, ids=[])->List[Image]:
+        stmt.options(undefer(Annotation.segmentation))
+        with self.ScopedSession() as session:
+            yield session.scalars(stmt).all()
+
+    def loadImgs(self, ids=[]) -> List[Image]:
         return self._loadByType(Image, ids)
 
-    def loadCats(self, ids=[])->List[Category]:
+    def loadCats(self, ids=[]) -> List[Category]:
         return self._loadByType(Category, ids)
 
     def annToRLE(self, ann: Annotation):
-        with Session(self.db) as session:
-            session.add(ann)
+        with self.ScopedSession() as session:
+            session.merge(ann)
             return loadRLE(ann.segmentation)
 
     def annToMask(self, ann: Annotation):
-        with Session(self.db) as session:
-            session.add(ann)
+        with self.ScopedSession() as session:
+            session.merge(ann)
             rle = loadRLE(ann.segmentation)
             return coco_mask.decode(rle)
 
-    def annHas(self,ann:Annotation,field):
-        with Session(self.db) as session:
-            session.add(ann)
-            return hasattr(ann,field) 
+    def download(self, tarDir=None, imgIds=[]):
+        if tarDir is None:
+            print("Please specify target directory")
+            return -1
+        if len(imgIds) == 0:
+            imgs = self.loadImgs(self.imgs)
+        else:
+            imgs = self.loadImgs(imgIds)
+        N = len(imgs)
+        if not os.path.exists(tarDir):
+            os.makedirs(tarDir)
+
+        for i, img in enumerate(imgs):
+            fpath = os.path.join(tarDir, img.bucket_name, img.file_name)
+            if not os.path.exists(fpath):
+                self.minio.fget_object(img.bucket_name, img.file_name, fpath)
+                print(f"{i}/{N} {os.path.basename(fpath)} downloaded", end="\r")
