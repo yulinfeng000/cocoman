@@ -116,9 +116,7 @@ class RemoteCOCOInstanceDatasetMapper:
         """
         self.tfm_gens = tfm_gens
         logging.getLogger(__name__).info(
-            "[COCOInstanceChromosomeDatasetMapper] Full TransformGens used in training: {}".format(
-                str(self.tfm_gens)
-            )
+            f"[{str(self.__class__)}] Full TransformGens used in training: {str(self.tfm_gens)}"
         )
 
         self.img_format = image_format

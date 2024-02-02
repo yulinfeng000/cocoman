@@ -214,7 +214,6 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     #     extra_annotation_keys or []
     # )
 
-    
     with ProcessPoolExecutor(max_workers=workers) as executor:
         batch_size = 10
         batches = [
@@ -487,7 +486,7 @@ def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/
     # 1. register a function which returns dicts
 
     DatasetCatalog.register(
-        name, lambda: cache_or_load_remote_coco_json_fast(remote_coco, name, cache_dir)
+        name, lambda: cache_or_load_remote_coco_json_fast(remote_coco, name, cache_dir, cache_dir)
     )
 
     # 2. Optionally, add metadata about this dataset,
