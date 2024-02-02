@@ -5,9 +5,9 @@ from concurrent.futures import ProcessPoolExecutor
 import pycocotools.mask as mask_util
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
-from cocoman.mycoco import RemoteCOCO
-from cocoman.tables import Image
-from concurrent.futures.thread import ThreadPoolExecutor
+from cocoman.mycoco import RemoteCOCO, binary_mask_to_polygon
+from cocoman.tables import Image, Annotation
+from cocoman.utils import loadRLE
 from concurrent.futures.process import ProcessPoolExecutor
 import functools
 from tqdm import tqdm
@@ -15,45 +15,26 @@ from tqdm import tqdm
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco")
 
 
-def _mask_decode_worker(dataset_dict):
-    for ann in dataset_dict["annotations"]:
-        if ann["iscrowd"]:
-            ann["segmentation"] = mask_util.decode(ann["segmentation"])
-    return dataset_dict
-
-
-def _record_query_worker(
-    imgs_ann: Tuple[Image, List[int]], coco_api: RemoteCOCO, id_map
-):
-    # global threadLocal
-    imgObj, annIds = imgs_ann
-
-    record = {}
-    record["bucket_name"] = imgObj.bucket_name
-    record["file_name"] = imgObj.file_name
-    record["height"] = imgObj.height
-    record["width"] = imgObj.width
-    image_id = record["image_id"] = imgObj.id
-
-    objs = []
-    # 确保 annotation 被 session 接管
-    with coco_api.loadAnns(annIds) as annObjs:
+def record_worker(imgs_anns: List[Tuple[Image, List[Annotation]]], id_map):
+    records = []
+    for imgObj, annObjs in imgs_anns:
+        record = {
+            "bucket_name": imgObj.bucket_name,
+            "file_name": imgObj.file_name,
+            "height": imgObj.height,
+            "width": imgObj.width,
+            "image_id": imgObj.id,
+        }
+        objs = []
         for anno in annObjs:
-            # Check that the image_id in this annotation is the same as
-            # the image_id we're looking at.
-            # This fails only when the data parsing logic or the annotation file is buggy.
-
-            # The original COCO valminusminival2014 & minival2014 annotation files
-            # actually contains bugs that, together with certain ways of using COCO API,
-            # can trigger this assertion.
-            assert anno.image_id == image_id
+            # assert anno.image_id == image_id
             # assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
 
-            obj = {"iscrowd": anno.iscrowd, "category_id": anno.category_id}
+            obj = {"iscrowd": 1 if anno.iscrowd else 0, "category_id": anno.category_id}
             if hasattr(anno, "bbox") and len(anno.bbox) == 0:
                 # if "bbox" in obj and len(obj["bbox"]) == 0:
                 raise ValueError(
-                    f"One annotation of image {image_id} contains empty 'bbox' value! "
+                    f"One annotation of image {anno.image_id} contains empty 'bbox' value! "
                     "This json does not have valid COCO format."
                 )
             else:
@@ -61,7 +42,12 @@ def _record_query_worker(
 
             # segm = anno.get("segmentation", None)
             if hasattr(anno, "segmentation"):
-                segm = coco_api.annToRLE(anno)
+                if anno.iscrowd:
+                    segm = loadRLE(anno.segmentation)
+                else:
+                    segm = binary_mask_to_polygon(
+                        mask_util.decode(loadRLE(anno.segmentation))
+                    )
             else:
                 segm = None
 
@@ -108,14 +94,12 @@ def _record_query_worker(
                     ) from e
             objs.append(obj)
         record["annotations"] = objs
-    return record
+        records.append(record)
+    return records
 
 
 def load_remote_coco_json_fast(
-    remote_coco: RemoteCOCO,
-    dataset_name,
-    extra_annotation_keys=None,
-    workers=5,
+    remote_coco: RemoteCOCO, dataset_name, extra_annotation_keys=None,workers=os.cpu_count()
 ):
     """
     Load a json file with COCO's instances annotation format.
@@ -205,7 +189,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     #   'category_id': 16,
     #   'id': 42986},
     #  ...]
-    anns = [coco_api.imgToAnns[img_id] for img_id in img_ids]
+    anns = [coco_api.loadAnns(coco_api.imgToAnns[img_id]) for img_id in img_ids]
     total_num_valid_anns = sum([len(x) for x in anns])
     total_num_anns = len(coco_api.anns)
     if total_num_valid_anns < total_num_anns:
@@ -220,33 +204,30 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     )
     dataset_dicts = []
 
-    # TODO: 暂不支持extra_annotation_keys
-    # ann_keys = ["iscrowd", "bbox", "keypoints", "category_id"] + (extra_annotation_keys or [])
-    ann_keys = ["iscrowd", "bbox", "keypoints", "category_id"]
+    # ann_keys = ["iscrowd", "bbox", "keypoints", "category_id"] + (
+    #     extra_annotation_keys or []
+    # )
 
     num_instances_without_valid_segmentation = 0
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        dataset_dicts = list(
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        batch_size = 10
+        batches = [
+            imgs_anns[i : i + batch_size] for i in range(0, len(imgs_anns), batch_size)
+        ]
+        batch_results = list(
             tqdm(
                 executor.map(
-                    functools.partial(
-                        _record_query_worker, coco_api=coco_api, id_map=id_map
-                    ),
-                    imgs_anns,
+                    functools.partial(record_worker, id_map=id_map),
+                    batches,
                 ),
-                total=len(imgs_anns),
-                desc="fetching dataset",
+                total=len(batches),
+                desc="Processing records",
             )
         )
-
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        dataset_dicts = list(
-            executor.map(
-                _mask_decode_worker,
-                dataset_dicts,
-            )
-        )
+    # 合并batch_results
+    dataset_dicts = [
+        record for batch_result in batch_results for record in batch_result
+    ]
 
     if num_instances_without_valid_segmentation > 0:
         logger.warning(
@@ -380,86 +361,84 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
         objs = []
         # 确保 annotation 被 session 接管
-        with coco_api.loadAnns(annIds) as annObjs:
-            logger.info(
-                f"[{i}/{len(imgs_anns)}] {imgObj.bucket_name}/{imgObj.file_name}, num of annotation: {len(annObjs)}"
-            )
-            for anno in annObjs:
-                # Check that the image_id in this annotation is the same as
-                # the image_id we're looking at.
-                # This fails only when the data parsing logic or the annotation file is buggy.
+        annObjs = coco_api.loadAnns(annIds)
+        logger.info(
+            f"[{i}/{len(imgs_anns)}] {imgObj.bucket_name}/{imgObj.file_name}, num of annotation: {len(annObjs)}"
+        )
+        for anno in annObjs:
+            # Check that the image_id in this annotation is the same as
+            # the image_id we're looking at.
+            # This fails only when the data parsing logic or the annotation file is buggy.
 
-                # The original COCO valminusminival2014 & minival2014 annotation files
-                # actually contains bugs that, together with certain ways of using COCO API,
-                # can trigger this assertion.
-                assert anno.image_id == image_id
-                # assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
+            # The original COCO valminusminival2014 & minival2014 annotation files
+            # actually contains bugs that, together with certain ways of using COCO API,
+            # can trigger this assertion.
+            assert anno.image_id == image_id
+            # assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
 
-                obj = {"iscrowd": anno.iscrowd, "category_id": anno.category_id}
-                if hasattr(anno, "bbox") and len(anno.bbox) == 0:
-                    # if "bbox" in obj and len(obj["bbox"]) == 0:
-                    raise ValueError(
-                        f"One annotation of image {image_id} contains empty 'bbox' value! "
-                        "This json does not have valid COCO format."
-                    )
+            obj = {"iscrowd": anno.iscrowd, "category_id": anno.category_id}
+            if hasattr(anno, "bbox") and len(anno.bbox) == 0:
+                # if "bbox" in obj and len(obj["bbox"]) == 0:
+                raise ValueError(
+                    f"One annotation of image {image_id} contains empty 'bbox' value! "
+                    "This json does not have valid COCO format."
+                )
+            else:
+                obj["bbox"] = anno.bbox
+
+            # segm = anno.get("segmentation", None)
+            if hasattr(anno, "segmentation"):
+                if anno.iscrowd:
+                    segm = coco_api.annToRLE(anno)
                 else:
-                    obj["bbox"] = anno.bbox
+                    segm = coco_api.annToMask(anno)
+            else:
+                segm = None
 
-                # segm = anno.get("segmentation", None)
-                if hasattr(anno, "segmentation"):
-                    if anno.iscrowd:
-                        segm = coco_api.annToRLE(anno)
-                    else:
-                        segm = coco_api.annToMask(anno)
+            if segm is not None:  # either list[list[float]] or dict(RLE)
+                if isinstance(segm, dict):
+                    if isinstance(segm["counts"], list):
+                        # convert to compressed RLE
+                        segm = mask_util.frPyObjects(segm, *segm["size"])
                 else:
-                    segm = None
+                    # filter out invalid polygons (< 3 points)
+                    segm = [
+                        poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
+                    ]
+                    if len(segm) == 0:
+                        num_instances_without_valid_segmentation += 1
+                        continue  # ignore this instance
+                obj["segmentation"] = segm
 
-                if segm is not None:  # either list[list[float]] or dict(RLE)
-                    if isinstance(segm, dict):
-                        if isinstance(segm["counts"], list):
-                            # convert to compressed RLE
-                            segm = mask_util.frPyObjects(segm, *segm["size"])
-                    else:
-                        # filter out invalid polygons (< 3 points)
-                        segm = [
-                            poly
-                            for poly in segm
-                            if len(poly) % 2 == 0 and len(poly) >= 6
-                        ]
-                        if len(segm) == 0:
-                            num_instances_without_valid_segmentation += 1
-                            continue  # ignore this instance
-                    obj["segmentation"] = segm
+            # TODO:  remote_coco 暂时没有这个keypoints
+            # keypts = anno.get("keypoints", None)
+            if hasattr(anno, "keypoints"):
+                keypts = anno.keypoints
+            else:
+                keypts = None
+            if keypts:  # list[int]
+                for idx, v in enumerate(keypts):
+                    if idx % 3 != 2:
+                        # COCO's segmentation coordinates are floating points in [0, H or W],
+                        # but keypoint coordinates are integers in [0, H-1 or W-1]
+                        # Therefore we assume the coordinates are "pixel indices" and
+                        # add 0.5 to convert to floating point coordinates.
+                        keypts[idx] = v + 0.5
+                obj["keypoints"] = keypts
 
-                # TODO:  remote_coco 暂时没有这个keypoints
-                # keypts = anno.get("keypoints", None)
-                if hasattr(anno, "keypoints"):
-                    keypts = anno.keypoints
-                else:
-                    keypts = None
-                if keypts:  # list[int]
-                    for idx, v in enumerate(keypts):
-                        if idx % 3 != 2:
-                            # COCO's segmentation coordinates are floating points in [0, H or W],
-                            # but keypoint coordinates are integers in [0, H-1 or W-1]
-                            # Therefore we assume the coordinates are "pixel indices" and
-                            # add 0.5 to convert to floating point coordinates.
-                            keypts[idx] = v + 0.5
-                    obj["keypoints"] = keypts
-
-                obj["bbox_mode"] = BoxMode.XYWH_ABS
-                if id_map:
-                    annotation_category_id = obj["category_id"]
-                    try:
-                        obj["category_id"] = id_map[annotation_category_id]
-                    except KeyError as e:
-                        raise KeyError(
-                            f"Encountered category_id={annotation_category_id} "
-                            "but this id does not exist in 'categories' of the json file."
-                        ) from e
-                objs.append(obj)
-            record["annotations"] = objs
-            dataset_dicts.append(record)
+            obj["bbox_mode"] = BoxMode.XYWH_ABS
+            if id_map:
+                annotation_category_id = obj["category_id"]
+                try:
+                    obj["category_id"] = id_map[annotation_category_id]
+                except KeyError as e:
+                    raise KeyError(
+                        f"Encountered category_id={annotation_category_id} "
+                        "but this id does not exist in 'categories' of the json file."
+                    ) from e
+            objs.append(obj)
+        record["annotations"] = objs
+        dataset_dicts.append(record)
 
     if num_instances_without_valid_segmentation > 0:
         logger.warning(

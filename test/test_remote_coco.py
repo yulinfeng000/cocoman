@@ -65,7 +65,7 @@ def test_coco():
 def test_load_remote_coco():
     global engine, minio
     from cocoman.mycoco import RemoteCOCO
-    from cocoman.integration.detectron2.remote_coco import load_remote_coco_json
+    from cocoman.integration.detectron2.remote_coco_dataset import load_remote_coco_json
 
     config = {
         "20230804-seg-coco": {
@@ -92,7 +92,7 @@ def test_local_coco():
 def test_remote_coco_mapper():
     global engine, minio
     from cocoman.mycoco import RemoteCOCO
-    from cocoman.integration.detectron2.remote_coco import load_remote_coco_json
+    from cocoman.integration.detectron2.remote_coco_dataset import load_remote_coco_json
     from cocoman.integration.detectron2.remote_coco_mapper import (
         RemoteCOCOInstanceChromosomeDatasetMapper,
     )
@@ -126,7 +126,7 @@ def test_remote_coco_mapper():
 def test_remote_coco_mapper():
     global engine, minio
     from cocoman.mycoco import RemoteCOCO
-    from cocoman.integration.detectron2.remote_coco import (
+    from cocoman.integration.detectron2.remote_coco_dataset import (
         load_remote_coco_json,
         load_remote_coco_json_fast,
     )
