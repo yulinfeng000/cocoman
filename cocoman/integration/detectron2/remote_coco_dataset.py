@@ -7,13 +7,14 @@ from concurrent.futures.process import ProcessPoolExecutor
 import functools
 from tqdm import tqdm
 from pathlib import Path
-import json
+import itertools
+import msgpack
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
 from cocoman.mycoco import RemoteCOCO, binary_mask_to_polygon
 from cocoman.tables import Image, Annotation
 from cocoman.utils import loadRLE
-import msgpack
+
 
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco")
 
@@ -230,9 +231,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
             )
         )
     # 合并batch_results
-    dataset_dicts = [
-        record for batch_result in batch_results for record in batch_result
-    ]
+    dataset_dicts  = list(itertools.chain.from_iterable(batch_results)) 
 
     return dataset_dicts
 
