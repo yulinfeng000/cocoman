@@ -178,7 +178,7 @@ class RemoteCOCO:
                     and_(Annotation.area > areaRng[0], Annotation.area <= areaRng[1])
                 )
 
-            if iscrowd:
+            if iscrowd is not None:
                 where_conditions.append(Annotation.iscrowd == iscrowd)
             stmt = stmt.where(and_(*where_conditions))
             return session.scalars(stmt).all()
