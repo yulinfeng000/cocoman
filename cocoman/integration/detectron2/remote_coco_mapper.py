@@ -128,7 +128,7 @@ class RemoteCOCOInstanceDatasetMapper:
             secret_key=cfg.REMOTE.MINIO_SECRET_KEY,
             secure=cfg.REMOTE.MINIO_SSL,
         )
-        self.tmp_dir = cfg.REMOTE.TMP_DIR
+        self.tmp_dir = cfg.REMOTE.TEMP_DIR
 
     @classmethod
     def from_config(cls, cfg, is_train=True):
@@ -188,7 +188,7 @@ class RemoteCOCOInstanceDatasetMapper:
             raise RuntimeError(
                 f"load image: {dataset_dict['bucket_name']}/{dataset_dict['file_name']} is None which should be transferred by web or local fs"
             )
-        
+
         utils.check_image_size(dataset_dict, image)
 
         # TODO: get padding mask

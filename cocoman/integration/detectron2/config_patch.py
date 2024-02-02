@@ -10,5 +10,5 @@ def add_remote_config(cfg):
     cfg.REMOTE.MINIO_SSL = MINIO_SSL
     cfg.REMOTE.DB_URL = DB_URL
     cfg.REMOTE.DB_POOL_SIZE = DB_POOL_SIZE
-    cfg.REMOTE.TMP_DIR = TEMP_DIR
+    cfg.REMOTE.TEMP_DIR = TEMP_DIR
     return cfg
