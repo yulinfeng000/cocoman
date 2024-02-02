@@ -3,14 +3,16 @@ import os
 from typing import Tuple, List
 from concurrent.futures import ProcessPoolExecutor
 import pycocotools.mask as mask_util
+from concurrent.futures.process import ProcessPoolExecutor
+import functools
+from tqdm import tqdm
+from pathlib import Path
+import json
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
 from cocoman.mycoco import RemoteCOCO, binary_mask_to_polygon
 from cocoman.tables import Image, Annotation
 from cocoman.utils import loadRLE
-from concurrent.futures.process import ProcessPoolExecutor
-import functools
-from tqdm import tqdm
 
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco")
 
@@ -99,7 +101,10 @@ def record_worker(imgs_anns: List[Tuple[Image, List[Annotation]]], id_map):
 
 
 def load_remote_coco_json_fast(
-    remote_coco: RemoteCOCO, dataset_name, extra_annotation_keys=None,workers=os.cpu_count()
+    remote_coco: RemoteCOCO,
+    dataset_name,
+    extra_annotation_keys=None,
+    workers=os.cpu_count(),
 ):
     """
     Load a json file with COCO's instances annotation format.
@@ -451,7 +456,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     return dataset_dicts
 
 
-def register_remote_coco_instances(name, metadata, remote_coco):
+def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/"):
     """
     Register a dataset in COCO's json annotation format for
     instance detection, instance segmentation and keypoint detection.
@@ -470,7 +475,24 @@ def register_remote_coco_instances(name, metadata, remote_coco):
     """
     assert isinstance(name, str), name
     # 1. register a function which returns dicts
-    DatasetCatalog.register(name, lambda: load_remote_coco_json_fast(remote_coco, name))
+
+    def cache_or_load_remote_coco_json_fast(remote_coco, name):
+        if cache_dir is not None:
+            return load_remote_coco_json_fast(remote_coco, name)
+
+        cache_file = Path(cache_dir).joinpath(f"{name}.json")
+        if cache_file.exists():
+            with open(str(cache_file), "r") as f:
+                return json.load(f)
+        else:
+            results = load_remote_coco_json_fast(remote_coco, name)
+            with open(str(cache_file), "w") as f:
+                json.dump(results)
+            return results
+
+    DatasetCatalog.register(
+        name, lambda: cache_or_load_remote_coco_json_fast(remote_coco, name)
+    )
 
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging

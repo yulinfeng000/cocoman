@@ -14,10 +14,12 @@ from minio import Minio
 from PIL import Image
 import io
 from urllib3.response import HTTPResponse
+from pathlib import Path
 
 __all__ = ["COCOInstanceChromosomeDatasetMapper"]
 
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco_mapper")
+
 
 def convert_coco_poly_to_mask(segmentations, height, width):
     masks = []
@@ -150,23 +152,39 @@ class RemoteCOCOInstanceChromosomeDatasetMapper:
             dict: a format that builtin models in detectron2 accept
         """
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
-        tmp_path = os.path.join(
-            self.tmp_dir, dataset_dict["bucket_name"], dataset_dict["file_name"]
-        )
-        # image = utils.read_image(tmp_path, format=self.img_format)
-        try:
-            resp: HTTPResponse = self.minio.get_object(
-                dataset_dict["bucket_name"], dataset_dict["file_name"], tmp_path
+        image = None
+        if self.temp_dir:
+            temp_path = Path(self.tmp_dir).joinpath(
+                dataset_dict["bucket_name"], dataset_dict["file_name"]
             )
-            if resp.status == 200:
-                image = utils.convert_PIL_to_numpy(
-                    Image.open(io.BytesIO(resp.read())), self.img_format
-                )
-                logger.debug(f"{dataset_dict['bucket_name']}, {dataset_dict['file_name']},image shape is {image.shape}")
-        finally:
-            resp.close()
-            resp.release_conn()
 
+            if not temp_path.exists():
+                self.minio.fget_object(
+                    dataset_dict["bucket_name"],
+                    dataset_dict["file_name"],
+                    str(temp_path),
+                )
+
+            image = utils.read_image(str(temp_path.absolute()), format=self.img_format)
+
+        else:
+            try:
+                resp: HTTPResponse = self.minio.get_object(
+                    dataset_dict["bucket_name"], dataset_dict["file_name"]
+                )
+                if resp.status == 200:
+                    image = utils.convert_PIL_to_numpy(
+                        Image.open(io.BytesIO(resp.read())), self.img_format
+                    )
+            finally:
+                resp.close()
+                resp.release_conn()
+
+        if image is None:
+            raise RuntimeError(
+                f"load image: {dataset_dict['bucket_name']}/{dataset_dict['file_name']} is None which should be transferred by web or local fs"
+            )
+        
         utils.check_image_size(dataset_dict, image)
 
         # TODO: get padding mask

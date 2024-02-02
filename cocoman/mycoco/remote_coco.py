@@ -21,6 +21,7 @@ from cocoman.mycoco.pycococreatetools import binary_mask_to_polygon
 
 
 logger = logging.getLogger("cocoman.mycoco.remote_coco")
+
 {
     "20230804-seg-coco": {
         "train": {"select-policy": {"type": "random", "nums": 1000}},
@@ -82,12 +83,12 @@ def ann_worker(anns):
     subsets = []
     for ann in anns:
         obj = {
-            "id":ann.id,
-            "area":ann.area,
-            "bbox":ann.bbox,
-            "category_id":ann.category_id,
-            "image_id":ann.image_id,
-            "iscrowd": 1 if ann.iscrowd else 0
+            "id": ann.id,
+            "area": ann.area,
+            "bbox": ann.bbox,
+            "category_id": ann.category_id,
+            "image_id": ann.image_id,
+            "iscrowd": 1 if ann.iscrowd else 0,
         }
         if ann.iscrowd:
             obj["segmentation"] = loadRLE(ann.segmentation)
@@ -328,7 +329,9 @@ class RemoteCOCO:
         annIds = self.getAnnIds()
         batch_size = 300
         annObjs = self.loadAnns(annIds)
-        batches = [annObjs[i:i + batch_size] for i in range(0, len(annObjs), batch_size)]
+        batches = [
+            annObjs[i : i + batch_size] for i in range(0, len(annObjs), batch_size)
+        ]
         with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
             batch_results = list(
                 tqdm(
@@ -337,9 +340,7 @@ class RemoteCOCO:
                     desc="Processing annotations",
                 )
             )
-        annotations = list(itertools.chain.from_iterable(batch_results)) # flatten
-
-
+        annotations = list(itertools.chain.from_iterable(batch_results))  # flatten
 
         categories = []
         for cat in tqdm(self.loadCats(self.getCatIds()), desc="Processing categories"):
