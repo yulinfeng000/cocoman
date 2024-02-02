@@ -154,7 +154,11 @@ class RemoteCOCOInstanceChromosomeDatasetMapper:
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         image = None
         if self.temp_dir:
-            temp_path = Path(self.tmp_dir).joinpath(
+            temp_dir = Path(self.tmp_dir)
+            if not temp_dir.exists():
+                temp_dir.mkdir(parents=True)
+
+            temp_path = temp_dir.joinpath(
                 dataset_dict["bucket_name"], dataset_dict["file_name"]
             )
 

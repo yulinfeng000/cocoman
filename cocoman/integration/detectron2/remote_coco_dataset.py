@@ -481,6 +481,10 @@ def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/
             return load_remote_coco_json_fast(remote_coco, name)
 
         cache_file = Path(cache_dir).joinpath(f"{name}.json")
+        
+        if not cache_file.parent.exists():
+            cache_file.parent.mkdir(parents=True)
+
         if cache_file.exists():
             with open(str(cache_file), "r") as f:
                 return json.load(f)
