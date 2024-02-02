@@ -13,6 +13,7 @@ from detectron2.structures import BoxMode
 from cocoman.mycoco import RemoteCOCO, binary_mask_to_polygon
 from cocoman.tables import Image, Annotation
 from cocoman.utils import loadRLE
+import msgpack
 
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco")
 
@@ -446,6 +447,26 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     return dataset_dicts
 
 
+def cache_or_load_remote_coco_json_fast(remote_coco, name, cache_dir):
+        if cache_dir is None:
+            return load_remote_coco_json_fast(remote_coco, name)
+
+        cache_file = Path(cache_dir).joinpath(f"{name}.msgpack")
+        
+        if not cache_file.parent.exists():
+            cache_file.parent.mkdir(parents=True)
+
+        if cache_file.exists():
+            with open(str(cache_file), "rb") as f:
+                return msgpack.unpack(f)
+        else:
+            print("cache dataset not found, will load it")
+            results = load_remote_coco_json_fast(remote_coco, name)
+            with open(str(cache_file), "wb") as f:
+                msgpack.pack(results,f)
+            return results
+
+
 def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/"):
     """
     Register a dataset in COCO's json annotation format for
@@ -466,26 +487,8 @@ def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/
     assert isinstance(name, str), name
     # 1. register a function which returns dicts
 
-    def cache_or_load_remote_coco_json_fast(remote_coco, name):
-        if cache_dir is not None:
-            return load_remote_coco_json_fast(remote_coco, name)
-
-        cache_file = Path(cache_dir).joinpath(f"{name}.json")
-        
-        if not cache_file.parent.exists():
-            cache_file.parent.mkdir(parents=True)
-
-        if cache_file.exists():
-            with open(str(cache_file), "r") as f:
-                return json.load(f)
-        else:
-            results = load_remote_coco_json_fast(remote_coco, name)
-            with open(str(cache_file), "w") as f:
-                json.dump(results)
-            return results
-
     DatasetCatalog.register(
-        name, lambda: cache_or_load_remote_coco_json_fast(remote_coco, name)
+        name, lambda: cache_or_load_remote_coco_json_fast(remote_coco, name, cache_dir)
     )
 
     # 2. Optionally, add metadata about this dataset,

@@ -99,9 +99,10 @@ class RemoteCOCOInstanceDatasetMapper:
     @configurable
     def __init__(
         self,
-        cfg,
         is_train=True,
         *,
+        minio,
+        temp_dir,
         tfm_gens,
         image_format,
     ):
@@ -122,13 +123,8 @@ class RemoteCOCOInstanceDatasetMapper:
 
         self.img_format = image_format
         self.is_train = is_train
-        self.minio = Minio(
-            cfg.REMOTE.MINIO_URL,
-            access_key=cfg.REMOTE.MINIO_ACCESS_KEY,
-            secret_key=cfg.REMOTE.MINIO_SECRET_KEY,
-            secure=cfg.REMOTE.MINIO_SSL,
-        )
-        self.tmp_dir = cfg.REMOTE.IMG_TEMP_DIR
+        self.minio:Minio = minio
+        self.temp_dir = temp_dir
 
     @classmethod
     def from_config(cls, cfg, is_train=True):
@@ -136,7 +132,13 @@ class RemoteCOCOInstanceDatasetMapper:
         tfm_gens = build_transform_gen(cfg, is_train)
 
         ret = {
-            "cfg": cfg,
+            "minio":  Minio(
+                cfg.REMOTE.MINIO_URL,
+                access_key=cfg.REMOTE.MINIO_ACCESS_KEY,
+                secret_key=cfg.REMOTE.MINIO_SECRET_KEY,
+                secure=cfg.REMOTE.MINIO_SSL,
+            ),
+            "temp_dir": cfg.REMOTE.IMG_TEMP_DIR,
             "is_train": is_train,
             "tfm_gens": tfm_gens,
             "image_format": cfg.INPUT.FORMAT,
@@ -154,7 +156,7 @@ class RemoteCOCOInstanceDatasetMapper:
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         image = None
         if self.temp_dir:
-            temp_dir = Path(self.tmp_dir)
+            temp_dir = Path(self.temp_dir)
             if not temp_dir.exists():
                 temp_dir.mkdir(parents=True)
 
