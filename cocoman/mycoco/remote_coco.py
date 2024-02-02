@@ -1,11 +1,11 @@
 import os
-from typing import Any, List
+from typing import List
 import json
 from contextlib import contextmanager
 import itertools
 import logging
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 from pathlib import Path
 import sqlalchemy as sq
@@ -234,7 +234,7 @@ class RemoteCOCO:
                     ids &= set(self.catToImgs[catId])
         return list(ids)
 
-    def _loadByType(self, type_cls: Base, ids=[], options=None):
+    def _loadByType(self, type_cls: Base, ids=[]):
         stmt: Select = select(type_cls)
         if _isArrayLike(ids):
             stmt = stmt.where(type_cls.id.in_(ids))

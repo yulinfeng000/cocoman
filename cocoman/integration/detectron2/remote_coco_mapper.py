@@ -2,10 +2,8 @@
 # Modified by Bowen Cheng from https://github.com/facebookresearch/detr/blob/master/d2/detr/dataset_mapper.py
 import copy
 import logging
-import os
 import numpy as np
 import torch
-
 from detectron2.config import configurable
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
@@ -16,7 +14,7 @@ import io
 from urllib3.response import HTTPResponse
 from pathlib import Path
 
-__all__ = ["COCOInstanceChromosomeDatasetMapper"]
+__all__ = ["RemoteCOCOInstanceDatasetMapper"]
 
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco_mapper")
 
