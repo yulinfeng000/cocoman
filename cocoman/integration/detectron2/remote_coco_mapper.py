@@ -81,7 +81,7 @@ def build_transform_gen(cfg, is_train):
 
 
 # This is specifically designed for the COCO dataset.
-class RemoteCOCOInstanceChromosomeDatasetMapper:
+class RemoteCOCOInstanceDatasetMapper:
     """
     A callable which takes a dataset dict in Detectron2 Dataset format,
     and map it into a format used by MaskFormer.
