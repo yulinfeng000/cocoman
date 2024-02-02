@@ -128,7 +128,7 @@ class RemoteCOCOInstanceDatasetMapper:
             secret_key=cfg.REMOTE.MINIO_SECRET_KEY,
             secure=cfg.REMOTE.MINIO_SSL,
         )
-        self.tmp_dir = cfg.REMOTE.TEMP_DIR
+        self.tmp_dir = cfg.REMOTE.IMG_TEMP_DIR
 
     @classmethod
     def from_config(cls, cfg, is_train=True):
