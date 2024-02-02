@@ -17,6 +17,7 @@ setup(
         'SQLAlchemy>=2.0',
         'minio',
         'psycopg2-binary',
-        'pycocotools'
+        'pycocotools',
+        'msgpack'
     ]
 )
