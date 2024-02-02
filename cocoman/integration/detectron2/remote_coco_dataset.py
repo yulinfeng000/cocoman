@@ -64,7 +64,6 @@ def record_worker(imgs_anns: List[Tuple[Image, List[Annotation]]], id_map):
                         poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
                     ]
                     if len(segm) == 0:
-                        num_instances_without_valid_segmentation += 1
                         continue  # ignore this instance
                 obj["segmentation"] = segm
 
@@ -213,7 +212,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     #     extra_annotation_keys or []
     # )
 
-    num_instances_without_valid_segmentation = 0
+    
     with ProcessPoolExecutor(max_workers=workers) as executor:
         batch_size = 10
         batches = [
@@ -234,14 +233,6 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
         record for batch_result in batch_results for record in batch_result
     ]
 
-    if num_instances_without_valid_segmentation > 0:
-        logger.warning(
-            "Filtered out {} instances without valid segmentation. ".format(
-                num_instances_without_valid_segmentation
-            )
-            + "There might be issues in your dataset generation process.  Please "
-            "check https://detectron2.readthedocs.io/en/latest/tutorials/datasets.html carefully"
-        )
     return dataset_dicts
 
 
@@ -411,7 +402,6 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
                         poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
                     ]
                     if len(segm) == 0:
-                        num_instances_without_valid_segmentation += 1
                         continue  # ignore this instance
                 obj["segmentation"] = segm
 
