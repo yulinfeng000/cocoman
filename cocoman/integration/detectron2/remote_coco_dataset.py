@@ -1,104 +1,96 @@
 import logging
 import os
 from typing import Tuple, List
-from concurrent.futures import ProcessPoolExecutor
 import pycocotools.mask as mask_util
-from concurrent.futures.process import ProcessPoolExecutor
 import functools
 from tqdm import tqdm
 from pathlib import Path
 import itertools
 import msgpack
+from joblib import Parallel, delayed
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
 from cocoman.mycoco import RemoteCOCO, binary_mask_to_polygon
-from cocoman.tables import Image, Annotation
 from cocoman.utils import loadRLE
 
 
 logger = logging.getLogger("cocoman.integration.detectron2.remote_coco")
 
 
-def record_worker(imgs_anns: List[Tuple[Image, List[Annotation]]], id_map):
-    records = []
-    for imgObj, annObjs in imgs_anns:
-        record = {
-            "bucket_name": imgObj.bucket_name,
-            "file_name": imgObj.file_name,
-            "height": imgObj.height,
-            "width": imgObj.width,
-            "image_id": imgObj.id,
-        }
-        objs = []
-        for anno in annObjs:
-            # assert anno.image_id == image_id
-            # assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
+def record_worker(imgs_anns: Tuple[dict, List[dict]], id_map):
+    imgObj, annObjs = imgs_anns
+    record = {
+        "bucket_name": imgObj["bucket_name"],
+        "file_name": imgObj["file_name"],
+        "height": imgObj["height"],
+        "width": imgObj["width"],
+        "image_id": imgObj["id"],
+    }
+    objs = []
+    for anno in annObjs:
+        # assert anno.image_id == image_id
+        # assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
 
-            obj = {"iscrowd": 1 if anno.iscrowd else 0, "category_id": anno.category_id}
-            if hasattr(anno, "bbox") and len(anno.bbox) == 0:
-                # if "bbox" in obj and len(obj["bbox"]) == 0:
-                raise ValueError(
-                    f"One annotation of image {anno.image_id} contains empty 'bbox' value! "
-                    "This json does not have valid COCO format."
+        obj = {"iscrowd": anno["iscrowd"], "category_id": anno["category_id"]}
+
+        if "bbox" in obj and len(obj["bbox"]) == 0:
+            raise ValueError(
+                f"One annotation of image {anno['image_id']} contains empty 'bbox' value! "
+                "This json does not have valid COCO format."
+            )
+        else:
+            obj["bbox"] = anno['bbox']
+
+        # segm = anno.get("segmentation", None)
+        if "segmentation" in anno:
+            if anno["iscrowd"]:
+                segm = loadRLE(anno["segmentation"])
+            else:
+                segm = binary_mask_to_polygon(
+                    mask_util.decode(loadRLE(anno["segmentation"]))
                 )
+        else:
+            segm = None
+
+        if segm is not None:  # either list[list[float]] or dict(RLE)
+            if isinstance(segm, dict):
+                if isinstance(segm["counts"], list):
+                    # convert to compressed RLE
+                    segm = mask_util.frPyObjects(segm, *segm["size"])
             else:
-                obj["bbox"] = anno.bbox
+                # filter out invalid polygons (< 3 points)
+                segm = [
+                    poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
+                ]
+                if len(segm) == 0:
+                    continue  # ignore this instance
+            obj["segmentation"] = segm
 
-            # segm = anno.get("segmentation", None)
-            if hasattr(anno, "segmentation"):
-                if anno.iscrowd:
-                    segm = loadRLE(anno.segmentation)
-                else:
-                    segm = binary_mask_to_polygon(
-                        mask_util.decode(loadRLE(anno.segmentation))
-                    )
-            else:
-                segm = None
+        # TODO:  remote_coco 暂时没有这个keypoints
+        keypts = anno.get("keypoints", None)
+        if keypts:  # list[int]
+            for idx, v in enumerate(keypts):
+                if idx % 3 != 2:
+                    # COCO's segmentation coordinates are floating points in [0, H or W],
+                    # but keypoint coordinates are integers in [0, H-1 or W-1]
+                    # Therefore we assume the coordinates are "pixel indices" and
+                    # add 0.5 to convert to floating point coordinates.
+                    keypts[idx] = v + 0.5
+            obj["keypoints"] = keypts
 
-            if segm is not None:  # either list[list[float]] or dict(RLE)
-                if isinstance(segm, dict):
-                    if isinstance(segm["counts"], list):
-                        # convert to compressed RLE
-                        segm = mask_util.frPyObjects(segm, *segm["size"])
-                else:
-                    # filter out invalid polygons (< 3 points)
-                    segm = [
-                        poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
-                    ]
-                    if len(segm) == 0:
-                        continue  # ignore this instance
-                obj["segmentation"] = segm
-
-            # TODO:  remote_coco 暂时没有这个keypoints
-            # keypts = anno.get("keypoints", None)
-            if hasattr(anno, "keypoints"):
-                keypts = anno.keypoints
-            else:
-                keypts = None
-            if keypts:  # list[int]
-                for idx, v in enumerate(keypts):
-                    if idx % 3 != 2:
-                        # COCO's segmentation coordinates are floating points in [0, H or W],
-                        # but keypoint coordinates are integers in [0, H-1 or W-1]
-                        # Therefore we assume the coordinates are "pixel indices" and
-                        # add 0.5 to convert to floating point coordinates.
-                        keypts[idx] = v + 0.5
-                obj["keypoints"] = keypts
-
-            obj["bbox_mode"] = BoxMode.XYWH_ABS
-            if id_map:
-                annotation_category_id = obj["category_id"]
-                try:
-                    obj["category_id"] = id_map[annotation_category_id]
-                except KeyError as e:
-                    raise KeyError(
-                        f"Encountered category_id={annotation_category_id} "
-                        "but this id does not exist in 'categories' of the json file."
-                    ) from e
-            objs.append(obj)
-        record["annotations"] = objs
-        records.append(record)
-    return records
+        obj["bbox_mode"] = BoxMode.XYWH_ABS
+        if id_map:
+            annotation_category_id = obj["category_id"]
+            try:
+                obj["category_id"] = id_map[annotation_category_id]
+            except KeyError as e:
+                raise KeyError(
+                    f"Encountered category_id={annotation_category_id} "
+                    "but this id does not exist in 'categories' of the json file."
+                ) from e
+        objs.append(obj)
+    record["annotations"] = objs
+    return record
 
 
 def load_remote_coco_json_fast(
@@ -148,7 +140,7 @@ def load_remote_coco_json_fast(
         cat_ids = sorted(coco_api.getCatIds())
         cats = coco_api.loadCats(cat_ids)
         # The categories in a custom json file may not be sorted.
-        thing_classes = [c.name for c in sorted(cats, key=lambda x: x.id)]
+        thing_classes = [c["name"] for c in sorted(cats, key=lambda x: x['id'])]
         meta.thing_classes = thing_classes
 
         # In COCO, certain category ids are artificially removed,
@@ -162,9 +154,7 @@ def load_remote_coco_json_fast(
         if not (min(cat_ids) == 1 and max(cat_ids) == len(cat_ids)):
             if "coco" not in dataset_name:
                 logger.warning(
-                    """
-Category ids in annotations are not in [1, #categories]! We'll apply a mapping for you.
-"""
+                    "Category ids in annotations are not in [1, #categories]! We'll apply a mapping for you."
                 )
         id_map = {v: i for i, v in enumerate(cat_ids)}
         meta.thing_dataset_id_to_contiguous_id = id_map
@@ -214,23 +204,10 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     #     extra_annotation_keys or []
     # )
 
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        batch_size = 10
-        batches = [
-            imgs_anns[i : i + batch_size] for i in range(0, len(imgs_anns), batch_size)
-        ]
-        batch_results = list(
-            tqdm(
-                executor.map(
-                    functools.partial(record_worker, id_map=id_map),
-                    batches,
-                ),
-                total=len(batches),
-                desc="Processing records",
-            )
-        )
-    # 合并batch_results
-    dataset_dicts  = list(itertools.chain.from_iterable(batch_results)) 
+    dataset_dicts = Parallel(n_jobs=-1)(
+        delayed(functools.partial(record_worker, id_map=id_map))(img_anns)
+        for img_anns in tqdm(imgs_anns,desc="Processing Records")
+    )
 
     return dataset_dicts
 
@@ -279,7 +256,7 @@ def load_remote_coco_json(
         cat_ids = sorted(coco_api.getCatIds())
         cats = coco_api.loadCats(cat_ids)
         # The categories in a custom json file may not be sorted.
-        thing_classes = [c.name for c in sorted(cats, key=lambda x: x.id)]
+        thing_classes = [c['name'] for c in sorted(cats, key=lambda x: x['id'])]
         meta.thing_classes = thing_classes
 
         # In COCO, certain category ids are artificially removed,
@@ -293,9 +270,7 @@ def load_remote_coco_json(
         if not (min(cat_ids) == 1 and max(cat_ids) == len(cat_ids)):
             if "coco" not in dataset_name:
                 logger.warning(
-                    """
-Category ids in annotations are not in [1, #categories]! We'll apply a mapping for you.
-"""
+                    "Category ids in annotations are not in [1, #categories]! We'll apply a mapping for you."
                 )
         id_map = {v: i for i, v in enumerate(cat_ids)}
         meta.thing_dataset_id_to_contiguous_id = id_map
@@ -348,17 +323,17 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     num_instances_without_valid_segmentation = 0
     for i, (imgObj, annIds) in enumerate(imgs_anns, 1):
         record = {}
-        record["bucket_name"] = imgObj.bucket_name
-        record["file_name"] = imgObj.file_name
-        record["height"] = imgObj.height
-        record["width"] = imgObj.width
-        image_id = record["image_id"] = imgObj.id
+        record["bucket_name"] = imgObj['bucket_name']
+        record["file_name"] = imgObj['file_name']
+        record["height"] = imgObj['height']
+        record["width"] = imgObj['width']
+        image_id = record["image_id"] = imgObj['id']
 
         objs = []
         # 确保 annotation 被 session 接管
         annObjs = coco_api.loadAnns(annIds)
         logger.info(
-            f"[{i}/{len(imgs_anns)}] {imgObj.bucket_name}/{imgObj.file_name}, num of annotation: {len(annObjs)}"
+            f"[{i}/{len(imgs_anns)}] {imgObj['bucket_name']}/{imgObj['file_name']}, num of annotation: {len(annObjs)}"
         )
         for anno in annObjs:
             # Check that the image_id in this annotation is the same as
@@ -368,48 +343,31 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
             # The original COCO valminusminival2014 & minival2014 annotation files
             # actually contains bugs that, together with certain ways of using COCO API,
             # can trigger this assertion.
-            assert anno.image_id == image_id
+            assert anno['image_id'] == image_id
             # assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
 
-            obj = {"iscrowd": anno.iscrowd, "category_id": anno.category_id}
-            if hasattr(anno, "bbox") and len(anno.bbox) == 0:
+            obj = {"iscrowd": anno['iscrowd'], "category_id": anno['category_id']}
+            if hasattr(anno, "bbox") and len(anno['bbox']) == 0:
                 # if "bbox" in obj and len(obj["bbox"]) == 0:
                 raise ValueError(
                     f"One annotation of image {image_id} contains empty 'bbox' value! "
                     "This json does not have valid COCO format."
                 )
             else:
-                obj["bbox"] = anno.bbox
+                obj["bbox"] = anno['bbox']
 
-            # segm = anno.get("segmentation", None)
-            if hasattr(anno, "segmentation"):
-                if anno.iscrowd:
-                    segm = coco_api.annToRLE(anno)
-                else:
-                    segm = coco_api.annToMask(anno)
-            else:
-                segm = None
+            segm = anno.get("segmentation", None)
 
             if segm is not None:  # either list[list[float]] or dict(RLE)
-                if isinstance(segm, dict):
-                    if isinstance(segm["counts"], list):
-                        # convert to compressed RLE
-                        segm = mask_util.frPyObjects(segm, *segm["size"])
+                if anno['iscrowd']:
+                    segm = coco_api.annToRLE(anno)
                 else:
-                    # filter out invalid polygons (< 3 points)
-                    segm = [
-                        poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
-                    ]
-                    if len(segm) == 0:
-                        continue  # ignore this instance
+                    segm = binary_mask_to_polygon(coco_api.annToMask(anno))
+
                 obj["segmentation"] = segm
 
             # TODO:  remote_coco 暂时没有这个keypoints
-            # keypts = anno.get("keypoints", None)
-            if hasattr(anno, "keypoints"):
-                keypts = anno.keypoints
-            else:
-                keypts = None
+            keypts = anno.get("keypoints", None)
             if keypts:  # list[int]
                 for idx, v in enumerate(keypts):
                     if idx % 3 != 2:
@@ -446,23 +404,23 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
 
 def cache_or_load_remote_coco_json_fast(remote_coco, name, cache_dir):
-        if cache_dir is None:
-            return load_remote_coco_json_fast(remote_coco, name)
+    if cache_dir is None:
+        return load_remote_coco_json_fast(remote_coco, name)
 
-        cache_file = Path(cache_dir).joinpath(f"{name}.msgpack")
-        
-        if not cache_file.parent.exists():
-            cache_file.parent.mkdir(parents=True)
+    cache_file = Path(cache_dir).joinpath(f"{name}.msgpack")
 
-        if cache_file.exists():
-            with open(str(cache_file), "rb") as f:
-                return msgpack.unpack(f)
-        else:
-            print("cache dataset not found, will load it")
-            results = load_remote_coco_json_fast(remote_coco, name)
-            with open(str(cache_file), "wb") as f:
-                msgpack.pack(results,f)
-            return results
+    if not cache_file.parent.exists():
+        cache_file.parent.mkdir(parents=True)
+
+    if cache_file.exists():
+        with open(str(cache_file), "rb") as f:
+            return msgpack.unpack(f)
+    else:
+        print("cache dataset not found, will load it")
+        results = load_remote_coco_json_fast(remote_coco, name)
+        with open(str(cache_file), "wb") as f:
+            msgpack.pack(results, f)
+        return results
 
 
 def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/"):
@@ -492,5 +450,5 @@ def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging
     MetadataCatalog.get(name).set(
-        config=remote_coco.config, evaluator_type="coco", **metadata
+        remote_coco=remote_coco, cache_dir=cache_dir, evaluator_type="coco", **metadata
     )

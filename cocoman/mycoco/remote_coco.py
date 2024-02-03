@@ -1,23 +1,30 @@
 import os
+import sys
 from typing import List
+import time
 import json
 from contextlib import contextmanager
 import itertools
 import logging
+import copy
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
+from joblib import Parallel, delayed
 from pathlib import Path
+import numpy as np
 import sqlalchemy as sq
 from sqlalchemy import Engine
 from minio import Minio
 from sqlalchemy.orm import Session, undefer, sessionmaker, scoped_session
 from sqlalchemy.sql import *
-
 from pycocotools import mask as coco_mask
+from pycocotools.coco import COCO as MSCOCO
 from cocoman.tables import Image, DataSet, Annotation, Category, Base
 from cocoman.utils import array_sample, loadRLE
 from cocoman.mycoco.pycococreatetools import binary_mask_to_polygon
+
+
+PYTHON_VERSION = sys.version_info[0]
 
 
 logger = logging.getLogger("cocoman.mycoco.remote_coco")
@@ -79,29 +86,23 @@ def get_images_by_config(dataset: str, subset: str, config: dict, session: Sessi
             raise NotImplementedError(f"policy type {policy_type} not implemented")
 
 
-def ann_worker(anns):
-    subsets = []
-    for ann in anns:
-        obj = {
-            "id": ann.id,
-            "area": ann.area,
-            "bbox": ann.bbox,
-            "category_id": ann.category_id,
-            "image_id": ann.image_id,
-            "iscrowd": 1 if ann.iscrowd else 0,
-        }
-        if ann.iscrowd:
-            obj["segmentation"] = loadRLE(ann.segmentation)
-        else:
-            obj["segmentation"] = binary_mask_to_polygon(
-                coco_mask.decode(loadRLE(ann.segmentation))
-            )
-        subsets.append(obj)
-    return subsets
+def ann_worker(ann):
+    if ann["iscrowd"]:
+        ann["segmentation"] = loadRLE(ann["segmentation"])
+    else:
+        ann["segmentation"] = binary_mask_to_polygon(
+            coco_mask.decode(loadRLE(ann["segmentation"]))
+        )
+    return ann
+
+
+def decodeAnn(ann):
+    ann["segmentation"] = loadRLE(ann["segmentation"])
+    return ann
 
 
 class RemoteCOCO:
-    def __init__(self, db: Engine, minio: Minio, config: dict):
+    def __init__(self, db: Engine, minio: Minio, config: dict, cache_dir=None):
         self.db = db
         self.sessionmaker = sessionmaker(bind=db)
         self.minio = minio
@@ -252,20 +253,230 @@ class RemoteCOCO:
             stmt = stmt.where(Annotation.id == ids)
 
         with self.ScopedSession() as session:
-            return session.scalars(stmt).all()
+            anns = session.scalars(stmt).all()
+
+        return [
+            {
+                "id": ann.id,
+                "area": ann.area,
+                "bbox": ann.bbox,
+                "category_id": ann.category_id,
+                "image_id": ann.image_id,
+                "iscrowd": 1 if ann.iscrowd else 0,
+                "segmentation": ann.segmentation,  # str
+            }
+            for ann in anns
+        ]
 
     def loadImgs(self, ids=[]) -> List[Image]:
-        return self._loadByType(Image, ids)
+        images = self._loadByType(Image, ids)
+        return [
+            {
+                "id": img.id,
+                "bucket_name": img.bucket_name,
+                "file_name": img.file_name,
+                "height": img.height,
+                "width": img.width,
+            }
+            for img in images
+        ]
 
     def loadCats(self, ids=[]) -> List[Category]:
-        return self._loadByType(Category, ids)
+        categories = self._loadByType(Category, ids)
+        return [
+            {"id": cat.id, "name": cat.name, "supercategory": cat.super_category}
+            for cat in categories
+        ]
 
-    def annToRLE(self, ann: Annotation):
-        return loadRLE(ann.segmentation)
+    def annToRLE(self, ann):
+        if isinstance(ann, Annotation):
+            return loadRLE(ann.segmentation)
+        else:
+            return loadRLE(ann["segmentation"])
 
-    def annToMask(self, ann: Annotation):
-        rle = loadRLE(ann.segmentation)
+    def annToMask(self, ann):
+        rle = self.annToRLE(ann)
         return coco_mask.decode(rle)
+
+    def loadRes(self, resFile):
+        """
+        Load result file and return a result api object.
+        :param   resFile (str)     : file name of result file
+        :return: res (obj)         : result api object
+        """
+        res = MSCOCO()
+        res.dataset["images"] = [img for img in self.dataset["images"]]
+
+        print("Loading and preparing results...")
+        tic = time.time()
+
+        if type(resFile) == str or (PYTHON_VERSION == 2 and type(resFile) == unicode):
+            with open(resFile) as f:
+                anns = json.load(f)
+        elif type(resFile) == np.ndarray:
+            anns = self.loadNumpyAnnotations(resFile)
+        else:
+            anns = resFile
+        assert type(anns) == list, "results in not an array of objects"
+        annsImgIds = [ann["image_id"] for ann in anns]
+        assert set(annsImgIds) == (
+            set(annsImgIds) & set(self.getImgIds())
+        ), "Results do not correspond to current coco set"
+        if "caption" in anns[0]:
+            imgIds = set([img["id"] for img in res.dataset["images"]]) & set(
+                [ann["image_id"] for ann in anns]
+            )
+            res.dataset["images"] = [
+                img for img in res.dataset["images"] if img["id"] in imgIds
+            ]
+            for id, ann in enumerate(anns):
+                ann["id"] = id + 1
+        elif "bbox" in anns[0] and not anns[0]["bbox"] == []:
+            res.dataset["categories"] = copy.deepcopy(self.dataset["categories"])
+            for id, ann in enumerate(anns):
+                bb = ann["bbox"]
+                x1, x2, y1, y2 = [bb[0], bb[0] + bb[2], bb[1], bb[1] + bb[3]]
+                if not "segmentation" in ann:
+                    ann["segmentation"] = [[x1, y1, x1, y2, x2, y2, x2, y1]]
+                ann["area"] = bb[2] * bb[3]
+                ann["id"] = id + 1
+                ann["iscrowd"] = 0
+        elif "segmentation" in anns[0]:
+            res.dataset["categories"] = copy.deepcopy(self.dataset["categories"])
+            for id, ann in enumerate(anns):
+                # now only support compressed RLE format as segmentation results
+                ann["area"] = coco_mask.area(ann["segmentation"])
+                if not "bbox" in ann:
+                    ann["bbox"] = coco_mask.toBbox(ann["segmentation"])
+                ann["id"] = id + 1
+                ann["iscrowd"] = 0
+        elif "keypoints" in anns[0]:
+            res.dataset["categories"] = copy.deepcopy(self.dataset["categories"])
+            for id, ann in enumerate(anns):
+                s = ann["keypoints"]
+                x = s[0::3]
+                y = s[1::3]
+                x0, x1, y0, y1 = np.min(x), np.max(x), np.min(y), np.max(y)
+                ann["area"] = (x1 - x0) * (y1 - y0)
+                ann["id"] = id + 1
+                ann["bbox"] = [x0, y0, x1 - x0, y1 - y0]
+        print("DONE (t={:0.2f}s)".format(time.time() - tic))
+
+        res.dataset["annotations"] = anns
+        res.createIndex()
+        return res
+
+    def showAnns(self, anns, draw_bbox=False):
+        """
+        Display the specified annotations.
+        :param anns (array of object): annotations to display
+        :return: None
+        """
+        if len(anns) == 0:
+            return 0
+        if "segmentation" in anns[0] or "keypoints" in anns[0]:
+            datasetType = "instances"
+        elif "caption" in anns[0]:
+            datasetType = "captions"
+        else:
+            raise Exception("datasetType not supported")
+        if datasetType == "instances":
+            import matplotlib.pyplot as plt
+            from matplotlib.collections import PatchCollection
+            from matplotlib.patches import Polygon
+
+            ax = plt.gca()
+            ax.set_autoscale_on(False)
+            polygons = []
+            color = []
+            for ann in anns:
+                c = (np.random.random((1, 3)) * 0.6 + 0.4).tolist()[0]
+                if "segmentation" in ann:
+                    if type(ann["segmentation"]) == list:
+                        # polygon
+                        for seg in ann["segmentation"]:
+                            poly = np.array(seg).reshape((int(len(seg) / 2), 2))
+                            polygons.append(Polygon(poly))
+                            color.append(c)
+                    elif type(ann["segmentation"]) == str:
+                        m = self.annToMask(ann)
+                        img = np.ones((m.shape[0], m.shape[1], 3))
+                        if ann["iscrowd"] == 1:
+                            color_mask = np.array([2.0, 166.0, 101.0]) / 255
+                        if ann["iscrowd"] == 0:
+                            color_mask = np.random.random((1, 3)).tolist()[0]
+                        for i in range(3):
+                            img[:, :, i] = color_mask[i]
+                        ax.imshow(np.dstack((img, m * 0.5)))
+                    else:
+                        # mask
+                        t = self.imgs[ann["image_id"]]
+                        if type(ann["segmentation"]["counts"]) == list:
+                            rle = coco_mask.frPyObjects(
+                                [ann["segmentation"]], t["height"], t["width"]
+                            )
+                        else:
+                            rle = [ann["segmentation"]]
+                        m = coco_mask.decode(rle)
+                        img = np.ones((m.shape[0], m.shape[1], 3))
+                        if ann["iscrowd"] == 1:
+                            color_mask = np.array([2.0, 166.0, 101.0]) / 255
+                        if ann["iscrowd"] == 0:
+                            color_mask = np.random.random((1, 3)).tolist()[0]
+                        for i in range(3):
+                            img[:, :, i] = color_mask[i]
+                        ax.imshow(np.dstack((img, m * 0.5)))
+
+                if "keypoints" in ann and type(ann["keypoints"]) == list:
+                    # turn skeleton into zero-based index
+                    sks = np.array(self.loadCats(ann["category_id"])[0]["skeleton"]) - 1
+                    kp = np.array(ann["keypoints"])
+                    x = kp[0::3]
+                    y = kp[1::3]
+                    v = kp[2::3]
+                    for sk in sks:
+                        if np.all(v[sk] > 0):
+                            plt.plot(x[sk], y[sk], linewidth=3, color=c)
+                    plt.plot(
+                        x[v > 0],
+                        y[v > 0],
+                        "o",
+                        markersize=8,
+                        markerfacecolor=c,
+                        markeredgecolor="k",
+                        markeredgewidth=2,
+                    )
+                    plt.plot(
+                        x[v > 1],
+                        y[v > 1],
+                        "o",
+                        markersize=8,
+                        markerfacecolor=c,
+                        markeredgecolor=c,
+                        markeredgewidth=2,
+                    )
+
+                if draw_bbox:
+                    [bbox_x, bbox_y, bbox_w, bbox_h] = ann["bbox"]
+                    poly = [
+                        [bbox_x, bbox_y],
+                        [bbox_x, bbox_y + bbox_h],
+                        [bbox_x + bbox_w, bbox_y + bbox_h],
+                        [bbox_x + bbox_w, bbox_y],
+                    ]
+                    np_poly = np.array(poly).reshape((4, 2))
+                    polygons.append(Polygon(np_poly))
+                    color.append(c)
+
+            p = PatchCollection(polygons, facecolor=color, linewidths=0, alpha=0.4)
+            ax.add_collection(p)
+            p = PatchCollection(
+                polygons, facecolor="none", edgecolors=color, linewidths=2
+            )
+            ax.add_collection(p)
+        elif datasetType == "captions":
+            for ann in anns:
+                print(ann["caption"])
 
     def download(self, tarDir=None, imgIds=[]):
         if tarDir is None:
@@ -275,14 +486,14 @@ class RemoteCOCO:
             imgs = self.loadImgs(self.imgs)
         else:
             imgs = self.loadImgs(imgIds)
-        N = len(imgs)
+
         if not os.path.exists(tarDir):
             os.makedirs(tarDir)
 
         for img in tqdm(imgs, desc="download images"):
-            fpath = os.path.join(tarDir, img.bucket_name, img.file_name)
+            fpath = os.path.join(tarDir, img["bucket_name"], img["file_name"])
             if not os.path.exists(fpath):
-                self.minio.fget_object(img.bucket_name, img.file_name, fpath)
+                self.minio.fget_object(img["bucket_name"], img["file_name"], fpath)
 
     def save(self, annFilePath, imgDir):
         annFilePath = Path(annFilePath)
@@ -295,17 +506,7 @@ class RemoteCOCO:
         if not imgDir.exists():
             imgDir.mkdir(parents=True)
 
-        images = []
-        imgObjs = self.loadImgs(self.getImgIds())
-        for img in tqdm(imgObjs, desc="Processing images"):
-            obj = {}
-            obj["id"] = img.id
-            obj["bucket_name"] = img.bucket_name
-            obj["file_name"] = img.file_name
-            obj["height"] = img.height
-            obj["width"] = img.width
-
-            images.append(obj)
+        images = self.loadImgs(self.getImgIds())
 
         annotations = []
         # singleton version
@@ -325,31 +526,26 @@ class RemoteCOCO:
         #         )
         #     annotations.append(obj)
 
-        # multiprocess version:
-        annIds = self.getAnnIds()
-        batch_size = 300
-        annObjs = self.loadAnns(annIds)
-        batches = [
-            annObjs[i : i + batch_size] for i in range(0, len(annObjs), batch_size)
-        ]
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            batch_results = list(
-                tqdm(
-                    executor.map(ann_worker, batches),
-                    total=len(batches),
-                    desc="Processing annotations",
-                )
-            )
-        annotations = list(itertools.chain.from_iterable(batch_results))  # flatten
+        # multiprocessing version:
+        annObjs = self.loadAnns(self.getAnnIds())
+        # batches = [
+        #     annObjs[i : i + batch_size] for i in range(0, len(annObjs), batch_size)
+        # ]
+        annotations = Parallel(n_jobs=-1)(
+            delayed(ann_worker)(ann)
+            for ann in tqdm(annObjs, desc="Processing annotations")
+        )
+        # with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        #     batch_results = list(
+        #         tqdm(
+        #             executor.map(ann_worker, batches),
+        #             total=len(batches),
+        #             desc="Processing annotations",
+        #         )
+        #     )
+        # annotations = list(itertools.chain.from_iterable(batch_results))  # flatten
 
-        categories = []
-        for cat in tqdm(self.loadCats(self.getCatIds()), desc="Processing categories"):
-            obj = {}
-            obj["id"] = cat.id
-            obj["name"] = cat.name
-            obj["supercategory"] = cat.super_category
-
-            categories.append(obj)
+        categories = self.loadCats(self.getCatIds())
 
         coco_json = {
             "images": images,
@@ -360,7 +556,9 @@ class RemoteCOCO:
         with open(str(annFilePath), "w") as f:
             json.dump(coco_json, f)
 
-        for img in imgObjs:
+        for img in images:
             self.minio.fget_object(
-                img.bucket_name, img.file_name, str(imgDir.joinpath(img.file_name))
+                img["bucket_name"],
+                img["file_name"],
+                str(imgDir.joinpath(img["file_name"])),
             )

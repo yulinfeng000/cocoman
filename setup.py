@@ -18,6 +18,7 @@ setup(
         'minio',
         'psycopg2-binary',
         'pycocotools',
-        'msgpack'
+        'msgpack',
+        'joblib'
     ]
 )
