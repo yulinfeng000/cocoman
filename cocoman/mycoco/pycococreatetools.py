@@ -2,7 +2,7 @@ import re
 import datetime
 import numpy as np
 from itertools import groupby
-from skimage import measure
+import cv2
 from PIL import Image
 from pycocotools import mask as coco_mask
 
@@ -32,7 +32,6 @@ def binary_mask_to_rle(binary_mask):
 
     return rle
 
-
 def binary_mask_to_polygon(binary_mask, tolerance=0):
     """Converts a binary mask to COCO polygon representation
 
@@ -42,25 +41,27 @@ def binary_mask_to_polygon(binary_mask, tolerance=0):
             polygonal chain. If tolerance is 0, the original coordinate array is returned.
 
     """
-    polygons = []
-    # pad mask to close contours of shapes which start and end at an edge
-    padded_binary_mask = np.pad(
-        binary_mask, pad_width=1, mode="constant", constant_values=0
-    )
-    contours = measure.find_contours(padded_binary_mask, 0.5)
-    contours = np.array([np.subtract(contour, 1) for contour in contours], dtype=object)
-    for contour in contours:
-        contour = close_contour(contour)
-        contour = measure.approximate_polygon(contour, tolerance)
-        if len(contour) < 3:
-            continue
-        contour = np.flip(contour, axis=1)
-        segmentation = contour.ravel().tolist()
-        # after padding and subtracting 1 we may get -0.5 points in our segmentation
-        segmentation = [0 if i < 0 else i for i in segmentation]
-        polygons.append(segmentation)
-
-    return polygons
+    # Find contours using OpenCV
+    # cv2.RETR_CCOMP flag retrieves all the contours and arranges them to a 2-level
+    # hierarchy. External contours (boundary) of the object are placed in hierarchy-1.
+    # Internal contours (holes) are placed in hierarchy-2.
+    # cv2.CHAIN_APPROX_NONE flag gets vertices of polygons from contours.
+    mask = np.ascontiguousarray(
+        binary_mask
+    )  # some versions of cv2 does not support incontiguous arr
+    res = cv2.findContours(mask.astype("uint8"), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    hierarchy = res[-1]
+    if hierarchy is None:  # empty mask
+        return [], False
+    res = res[-2]
+    res = [x.flatten() for x in res]
+    # These coordinates from OpenCV are integers in range [0, W-1 or H-1].
+    # We add 0.5 to turn them into real-value coordinate space. A better solution
+    # would be to first +0.5 and then dilate the returned polygon by 0.5.
+    res = [x + 0.5 for x in res if len(x) >= 6]
+    # to list
+    res = [x.tolist() for x in res]
+    return res
 
 
 def create_image_info(
@@ -115,7 +116,7 @@ def create_annotation_info(
     else:
         is_crowd = 0
         segmentation = binary_mask_to_polygon(binary_mask, tolerance)
-        if not segmentation:
+        if segmentation is None:
             return None
 
     annotation_info = {
