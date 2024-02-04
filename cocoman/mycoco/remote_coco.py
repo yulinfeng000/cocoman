@@ -289,10 +289,7 @@ class RemoteCOCO:
         ]
 
     def annToRLE(self, ann):
-        if isinstance(ann, Annotation):
-            return loadRLE(ann.segmentation)
-        else:
-            return loadRLE(ann["segmentation"])
+        return loadRLE(ann["segmentation"])
 
     def annToMask(self, ann):
         rle = self.annToRLE(ann)
