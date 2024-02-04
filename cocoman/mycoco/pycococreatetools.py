@@ -32,6 +32,7 @@ def binary_mask_to_rle(binary_mask):
 
     return rle
 
+
 def binary_mask_to_polygon(binary_mask, tolerance=0):
     """Converts a binary mask to COCO polygon representation
 
@@ -54,13 +55,9 @@ def binary_mask_to_polygon(binary_mask, tolerance=0):
     if hierarchy is None:  # empty mask
         return [], False
     res = res[-2]
-    res = [x.flatten() for x in res]
-    # These coordinates from OpenCV are integers in range [0, W-1 or H-1].
-    # We add 0.5 to turn them into real-value coordinate space. A better solution
-    # would be to first +0.5 and then dilate the returned polygon by 0.5.
-    # res = #z[x + 0.5 for x in res if len(x) >= 6]
-    # to list
-    res = [x.tolist() for x in res]
+    res = [
+        cv2.approxPolyDP(x, tolerance, closed=True).flatten().tolist() for x in res
+    ]  # Approximates a polygonal curve(s) with the specified precision.
     return res
 
 
