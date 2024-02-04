@@ -6,7 +6,6 @@
 # PROJECT_ROOT = "../../"
 # import sys
 # sys.path.append(PROJECT_ROOT)
-
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 import os
@@ -33,6 +32,7 @@ from cocoman.mycoco import (
     binary_mask_to_rle,
     coco_mask as maskutils,
 )
+import traceback
 import logging
 
 logger = logging.getLogger('cocoman.commandline.maker')
@@ -97,6 +97,7 @@ def get_args():
     parser.add_argument("--multi-cls", action="store_true", default=False, help="是否生成为多分类")
     parser.add_argument("--pic-suffix",choices=["jpg","png",],default="png",help="中期图的后缀")
     parser.add_argument("--mask-fname-format",choices=["huaxi","taiwan",],default="huaxi",help="mask文件名的格式")
+    parser.add_argument("--verbose",action="store_true",default=False,help="是否打印详细信息")
     return parser.parse_args()
 
 
@@ -336,6 +337,7 @@ def task_worker(
 
 
 def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="png",gen_mask_fn=create_annotation_info,mask_fname_format="huaxi"):
+    logger.debug(f"use multiprocess_generate_annotation_json func, gen_mask_fn:{create_annotation_info.__name__}")
     annotation_idgen = itertools.count(start=1)
     # 分类信息生成
     categories = [
@@ -395,6 +397,7 @@ def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="
 def multiprocess_generate_annotation_json_single_cls(
     root_pics_dir, root_mask_dir, suffix="png",gen_mask_fn=create_annotation_info,mask_fname_format="huaxi"
 ):  
+    logger.debug(f"use multiprocess_generate_annotation_json_single_cls func, gen_mask_fn:{create_annotation_info.__name__}")
     annotation_idgen = itertools.count(start=1)
     # 分类信息生成
     categories = [
@@ -440,10 +443,15 @@ def multiprocess_generate_annotation_json_single_cls(
 
         with tqdm(total=len(tasks), desc="并行任务执行中") as pbar:
             for future in as_completed(tasks):
-                ann_info = future.result()
-                if ann_info:
-                    annotations.append(ann_info)
+                if future.exception():
+                    traceback.print_exception(future.exception()) # traceback.format_tb(future.exception().__traceback__)
+                else:
+                    ann_info = future.result()
+                    if ann_info:
+                        annotations.append(ann_info)
+         
                 pbar.update(1)
+              
 
     return dict(images=images, categories=categories, annotations=annotations)
 
@@ -474,6 +482,9 @@ def cmd_entrypoint(args):
     """
     cli 命令行入口
     """
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    
     DATASET_NAME = args.dataset_name
     PIC_ROOT_DIR = args.metaphase
     MASK_ROOT_DIR = args.mask
@@ -483,6 +494,9 @@ def cmd_entrypoint(args):
     ANNOTATION_DIR = os.path.join(OUTPUT_DIR,DATASET_NAME, "annotations")
     PIC_SUFFIX = args.pic_suffix
     MASKFNAME_FORMART = args.mask_fname_format
+
+    logger.debug(f"pic root dir:{PIC_ROOT_DIR}, mask root dir:{MASK_ROOT_DIR}, output dir:{OUTPUT_DIR}")
+
     readme_template(args)
     # 创建文件夹
     for d in [TRAIN_DIR, VAL_DIR, ANNOTATION_DIR]:
@@ -501,6 +515,8 @@ def cmd_entrypoint(args):
     if args.rotated_box:
         partial_params["gen_mask_fn"]=create_rotated_annotation_info
     partial_params.update(dict(suffix=PIC_SUFFIX,mask_fname_format=MASKFNAME_FORMART))
+    logger.debug(f"use generate json func: {generate_json_func.__name__}")
+    logger.debug(f"generate_json_func params: {partial_params}")
     generate_json_func = functools.partial(generate_json_func,**partial_params)
 
     train_json = generate_json_func(TRAIN_DIR, MASK_ROOT_DIR)

@@ -14,11 +14,14 @@ setup(
         ]
     },
     install_requires=[
-        'SQLAlchemy>=2.0',
+        'SQLAlchemy',
         'minio',
         'psycopg2-binary',
         'pycocotools',
         'msgpack',
-        'joblib'
+        'joblib',
+	'tqdm',
+	'opencv-python',
+	'scikit-learn'
     ]
 )
