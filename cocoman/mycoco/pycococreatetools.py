@@ -58,7 +58,7 @@ def binary_mask_to_polygon(binary_mask, tolerance=0):
     # These coordinates from OpenCV are integers in range [0, W-1 or H-1].
     # We add 0.5 to turn them into real-value coordinate space. A better solution
     # would be to first +0.5 and then dilate the returned polygon by 0.5.
-    res = [x + 0.5 for x in res if len(x) >= 6]
+    # res = #z[x + 0.5 for x in res if len(x) >= 6]
     # to list
     res = [x.tolist() for x in res]
     return res
