@@ -33,11 +33,11 @@ def binary_mask_to_rle(binary_mask):
     return rle
 
 
-def binary_mask_to_polygon(binary_mask, tolerance=0):
+def binary_mask_to_polygon(binary_mask, tolerance=1):
     contours = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = contours[0] if len(contours) == 2 else contours[1]
     if tolerance <= 0:
-        return contours
+        return [cnt.flatten().tolist() for cnt in contours]
     else:
         return [cv2.approxPolyDP(cnt, tolerance, closed=True).flatten().tolist() for cnt in contours]
 
