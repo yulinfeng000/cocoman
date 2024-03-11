@@ -142,6 +142,7 @@
      使用该方法来注册数据集
 
     `def register_remote_coco_instances(name, metadata, remote_coco, cache_dir="/tmp/")`
+    
         name:                   要注册在detectron2框架中的数据集的名字
         metadata:               detectron2 metadata
         remote_coco:            RemoteCOCO实例

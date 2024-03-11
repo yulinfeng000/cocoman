@@ -492,16 +492,16 @@ class RemoteCOCO:
             if not os.path.exists(fpath):
                 self.minio.fget_object(img["bucket_name"], img["file_name"], fpath)
 
-    def save(self, annFilePath, imgDir):
+    def save(self, annFilePath, imgDir=None, saveFunc=json.dump):
+        """
+        save 方法
+
+        saveFunc: 传入参数为 (json_dict, file_descriptor)
+        """
         annFilePath = Path(annFilePath)
         # assert annFilePath.is_file(), "{annFilePath} is not file"
         if not annFilePath.parent.exists():
             annFilePath.parent.mkdir(parents=True)
-
-        imgDir = Path(imgDir)
-        # assert imgDir.is_dir(), f"{imgDir} is not directory"
-        if not imgDir.exists():
-            imgDir.mkdir(parents=True)
 
         images = self.loadImgs(self.getImgIds())
 
@@ -551,11 +551,16 @@ class RemoteCOCO:
         }
 
         with open(str(annFilePath), "w") as f:
-            json.dump(coco_json, f)
+            saveFunc(coco_json, f)
 
-        for img in images:
-            self.minio.fget_object(
-                img["bucket_name"],
-                img["file_name"],
-                str(imgDir.joinpath(img["file_name"])),
-            )
+        if imgDir is not None:
+            imgDir = Path(imgDir)
+            if not imgDir.exists():
+                imgDir.mkdir(parents=True)
+
+            for img in images:
+                self.minio.fget_object(
+                    img["bucket_name"],
+                    img["file_name"],
+                    str(imgDir.joinpath(img["file_name"])),
+                )
