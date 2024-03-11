@@ -5,7 +5,7 @@ import pycocotools.mask as mask_util
 import functools
 from tqdm import tqdm
 from pathlib import Path
-import itertools
+import cv2
 import msgpack
 from joblib import Parallel, delayed
 from detectron2.data import DatasetCatalog, MetadataCatalog

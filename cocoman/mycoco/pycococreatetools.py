@@ -33,32 +33,13 @@ def binary_mask_to_rle(binary_mask):
     return rle
 
 
-def binary_mask_to_polygon(binary_mask, tolerance=0):
-    """Converts a binary mask to COCO polygon representation
-
-    Args:
-        binary_mask: a 2D binary numpy array where '1's represent the object
-        tolerance: Maximum distance from original points of polygon to approximated
-            polygonal chain. If tolerance is 0, the original coordinate array is returned.
-
-    """
-    # Find contours using OpenCV
-    # cv2.RETR_CCOMP flag retrieves all the contours and arranges them to a 2-level
-    # hierarchy. External contours (boundary) of the object are placed in hierarchy-1.
-    # Internal contours (holes) are placed in hierarchy-2.
-    # cv2.CHAIN_APPROX_NONE flag gets vertices of polygons from contours.
-    mask = np.ascontiguousarray(
-        binary_mask
-    )  # some versions of cv2 does not support incontiguous arr
-    res = cv2.findContours(mask.astype("uint8"), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    hierarchy = res[-1]
-    if hierarchy is None:  # empty mask
-        return [], False
-    res = res[-2]
-    res = [
-        cv2.approxPolyDP(x, tolerance, closed=True).flatten().tolist() for x in res
-    ]  # Approximates a polygonal curve(s) with the specified precision.
-    return res
+def binary_mask_to_polygon(binary_mask, tolerance=1):
+    contours = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = contours[0] if len(contours) == 2 else contours[1]
+    if tolerance <= 0:
+        return [cnt.flatten().tolist() for cnt in contours]
+    else:
+        return [cv2.approxPolyDP(cnt, tolerance, closed=True).flatten().tolist() for cnt in contours]
 
 
 def create_image_info(
