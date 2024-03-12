@@ -4,7 +4,7 @@ from sqlalchemy.sql import *
 from minio import Minio
 from cocoman.mycoco import LocalCOCO
 from cocoman.tables import Image, Category, Annotation, DataSet
-from cocoman.utils import dumpRLE, object_exists
+from cocoman.utils import dumpRLE, object_exists,create_db_engine,create_minio
 from cocoman.settings import (
     MINIO_ACCESS_KEY,
     MINIO_SECRET_KEY,
@@ -119,7 +119,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", help="command to run", choices=["upload"])
     parser.add_argument(
-        "--db-url", default=DB_URL, help="sqlalchemy format postgres db url"
+        "--db-url", default=DB_URL, help="{username}:{password}@{host}:{port}/{db} format postgres db url"
     )
     parser.add_argument("--minio-url", default=MINIO_URL, help="minio endpoint url")
     parser.add_argument(
@@ -153,13 +153,13 @@ def get_args():
 
 
 def cmd_entrypoint(args):
-    engine = create_engine(args.db_url, pool_size=DB_POOL_SIZE)
+    engine = create_db_engine(args.db_url, pool_size=DB_POOL_SIZE)
 
-    minio = Minio(
+    minio = create_minio(
         args.minio_url,
-        access_key=args.minio_access_key,
-        secret_key=args.minio_secret_key,
-        secure=args.minio_ssl,
+        minio_access_key=args.minio_access_key,
+        minio_secret_key=args.minio_secret_key,
+        ssl=args.minio_ssl,
     )
 
     upload(
