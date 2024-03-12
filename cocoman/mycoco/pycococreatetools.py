@@ -34,6 +34,8 @@ def binary_mask_to_rle(binary_mask):
 
 
 def binary_mask_to_polygon(binary_mask, tolerance=1):
+    binary_mask = np.ascontiguousarray(binary_mask)
+    binary_mask = np.uint8(binary_mask)
     contours = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = contours[0] if len(contours) == 2 else contours[1]
     if tolerance <= 0:
