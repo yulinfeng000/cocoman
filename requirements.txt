@@ -58,5 +58,5 @@ threadpoolctl
 tqdm
 typing_extensions
 urllib3
-uvicorn
+uvicorn[standard]
 yarl

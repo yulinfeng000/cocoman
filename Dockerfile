@@ -1,4 +1,4 @@
-FROM tiangolo/uvicorn-gunicorn-fastapi:python3.11
+FROM python:3.11
 
 
 ENV MINIO_URL="localhost:9000"
@@ -7,9 +7,8 @@ ENV MINIO_SECRET_KEY="tomcatisroot"
 ENV MINIO_SSL='false'
 ENV MONGO_DB_URL="mongodb://root:password@localhost:27017/mycoco?authSource=admin"
 ENV MONGO_DB_NAME='mycoco'
-ENV APP_MODULE='cocoman.server.http_server:app'
-ENV WORKER_CLASS='cocoman.server.lifespan_worker.LifespanUvicornWorker'
 
+EXPOSE 80
 WORKDIR /app
 
 # Ensure the APT sources.list exists and modify it or create a new one
@@ -31,3 +30,5 @@ COPY . .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt 
 RUN python setup.py install
+
+ENTRYPOINT ["uvicorn", "cocoman.server.http_server:app","--host", "0.0.0.0", "--port", "80"]
