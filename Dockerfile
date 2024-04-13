@@ -9,6 +9,7 @@ ENV MONGO_DB_URL="mongodb://root:password@localhost:27017/mycoco?authSource=admi
 ENV MONGO_DB_NAME='mycoco'
 
 EXPOSE 80
+
 WORKDIR /app
 
 # Ensure the APT sources.list exists and modify it or create a new one
@@ -28,7 +29,7 @@ RUN apt-get update && apt-get install -y \
 COPY . .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt 
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt 
 RUN python setup.py install
 
 ENTRYPOINT ["uvicorn", "cocoman.server.http_server:app","--host", "0.0.0.0", "--port", "80"]

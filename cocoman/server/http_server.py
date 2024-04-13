@@ -1,5 +1,6 @@
 from collections import defaultdict
 import json
+import logging
 from typing import Optional, TypedDict, Dict, Literal, Any, List, Union
 from fastapi import FastAPI, Request, UploadFile, Form, File
 from fastapi.responses import StreamingResponse, Response, ORJSONResponse
@@ -32,6 +33,8 @@ MONGO_DB: ContextVar[AsyncIOMotorDatabase] = ContextVar("MONGO_DB", default=None
 MINIO: ContextVar[Minio] = ContextVar("MINIO", default=None)
 EXECUTOR: ContextVar[ThreadPoolExecutor] = ContextVar("EXECUTOR", default=None)
 
+logger = logging.getLogger("cocoman.server.http_server")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -45,6 +48,8 @@ async def lifespan(app: FastAPI):
     app.state.mongo = create_mongodb_db_async(url=MONGO_DB_URL, db_name=MONGO_DB_NAME)
     yield
     app.state.thread_pool.shutdown()
+    del app.state.mongo
+    del app.state.minio
     print("shutdown process pool")
 
 
@@ -125,7 +130,7 @@ async def get_images_by_config(
                     [
                         {"$match": {"dataset_type": subset, "dataset_name": dataset}},
                         {"$unwind": {"path": "$image_ids"}},
-                        {"$project": {"image_ids": 1}},
+                        {"$project": {"image_ids": {"$toString": "$image_ids"}}},
                         {"$sample": {"size": policy["nums"]}},
                     ]
                 )
@@ -143,17 +148,19 @@ async def get_images_by_config(
                         {"$unwind": {"path": "$image_ids"}},
                         {
                             "$project": {
-                                "image_ids": 1,
+                                "image_ids": {"$toString": "$image_ids"},
                                 "_id": 0,
                             }
                         },
                     ]
                 )
             ]
+            if not imgIds:
+                raise Exception("not found")
             return imgIds
 
         elif policy_type == "index":
-            return [ObjectId(i) for i in policy["ids"]]
+            return [str(i) for i in policy["ids"]]
 
         else:
             raise NotImplementedError(f"policy type {policy_type} not implemented")
@@ -161,12 +168,12 @@ async def get_images_by_config(
     else:
         if policy_type == "random":
             imgIds = [
-                i["_id"]
+                i["id"]
                 async for i in db["images"].aggregate(
                     [
                         {"$match": {"bucket_name": dataset}},
                         {"$sample": {"size": policy["nums"]}},
-                        {"$project": {"_id": 1}},
+                        {"$project": {"id": {"$toString": "$_id"}}},
                     ]
                 )
             ]
@@ -174,18 +181,18 @@ async def get_images_by_config(
 
         elif policy_type == "all":
             imgIds = [
-                i["_id"]
+                i["id"]
                 async for i in db["images"].aggregate(
                     [
                         {"$match": {"bucket_name": dataset}},
-                        {"$project": {"_id": 1}},
+                        {"$project": {"id": {"$toString": "$_id"}}},
                     ]
                 )
             ]
             return imgIds
 
         elif policy_type == "index":
-            return [ObjectId(i) for i in policy["ids"]]
+            return [str(i) for i in policy["ids"]]
 
         else:
             raise NotImplementedError(f"policy type {policy_type} not implemented")
@@ -242,12 +249,14 @@ async def createIndex(req: CreateRemoteIndexReq):
 
     for dataset_name, select_config in config.items():
         for subset, config in select_config.items():
-            imgs.extend(await get_images_by_config(dataset_name, subset, config, db))
-
+            finded_image_ids = await get_images_by_config(
+                dataset_name, subset, config, db
+            )
+            imgs.extend(finded_image_ids)
     annotations = db["annotations"].aggregate([{"$match": {"image_id": {"$in": imgs}}}])
 
     async for ann in annotations:
-        anns.append(ann["_id"])
+        anns.append(str(ann["_id"]))
         imgToAnns[str(ann["image_id"])].append(str(ann["_id"]))
         catToImgs[str(ann["category_id"])].append(str(ann["image_id"]))
 

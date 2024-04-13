@@ -32,9 +32,9 @@ services:
     ports:
       - 8899:80
     environment:
-      MINIO_URL: "localhost:9000"
+      MINIO_URL: "minio:9000"
       MINIO_ACCESS_KEY: "tomcat"
       MINIO_SECRET_KEY: "tomcatisroot"
-      MONGO_DB_URL: "mongodb://root:password@localhost:27017/mycoco?authSource=admin"
+      MONGO_DB_URL: "mongodb://root:password@mongo:27017/mycoco?authSource=admin"
       MONGO_DB_NAME: "mycoco"
   
