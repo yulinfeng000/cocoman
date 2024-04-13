@@ -10,7 +10,6 @@ from cocoman.common.utils import (
     create_minio,
     async_dump_big_json_list_stream,
 )
-import io
 from cocoman.common.settings import (
     MINIO_ACCESS_KEY,
     MINIO_SECRET_KEY,

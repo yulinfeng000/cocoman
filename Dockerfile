@@ -8,6 +8,7 @@ ENV MINIO_SSL='false'
 ENV MONGO_DB_URL="mongodb://root:password@localhost:27017/mycoco?authSource=admin"
 ENV MONGO_DB_NAME='mycoco'
 ENV APP_MODULE='cocoman.server.http_server:app'
+ENV WORKER_CLASS='cocoman.server.lifespan_worker.LifespanUvicornWorker'
 
 WORKDIR /app
 
