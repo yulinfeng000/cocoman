@@ -32,7 +32,7 @@ motor
 msgpack
 multidict
 numpy
-opencv-python
+opencv-python-headless
 orjson
 packaging
 pillow
