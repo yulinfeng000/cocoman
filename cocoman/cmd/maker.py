@@ -24,7 +24,7 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 from argparse import ArgumentParser
 from io import TextIOWrapper
-from cocoman.mycoco import (
+from cocoman.client import (
     create_image_info,
     create_annotation_info,
     resize_binary_mask,
@@ -35,7 +35,7 @@ from cocoman.mycoco import (
 import traceback
 import logging
 
-logger = logging.getLogger('cocoman.commandline.maker')
+logger = logging.getLogger('cocoman.cmd.maker')
 
 def readme_template(args,io:TextIOWrapper=None,statistic=None):
     def write_pair(io,k,v):

@@ -41,7 +41,10 @@ def binary_mask_to_polygon(binary_mask, tolerance=1):
     if tolerance <= 0:
         return [cnt.flatten().tolist() for cnt in contours]
     else:
-        return [cv2.approxPolyDP(cnt, tolerance, closed=True).flatten().tolist() for cnt in contours]
+        return [
+            cv2.approxPolyDP(cnt, tolerance, closed=True).flatten().tolist()
+            for cnt in contours
+        ]
 
 
 def create_image_info(

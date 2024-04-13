@@ -19,15 +19,15 @@ from sqlalchemy.orm import Session, undefer, sessionmaker, scoped_session
 from sqlalchemy.sql import *
 from pycocotools import mask as coco_mask
 from pycocotools.coco import COCO as MSCOCO
-from cocoman.tables import Image, DataSet, Annotation, Category, Base
-from cocoman.utils import array_sample, loadRLE
-from cocoman.mycoco.pycococreatetools import binary_mask_to_polygon
+from cocoman.common.tables import Image, DataSet, Annotation, Category, Base
+from cocoman.common.utils import array_sample, loadRLE
+from cocoman.client.pycococreatetools import binary_mask_to_polygon
 
 
 PYTHON_VERSION = sys.version_info[0]
 
 
-logger = logging.getLogger("cocoman.mycoco.remote_coco")
+logger = logging.getLogger("cocoman.mycoco.postgres_coco")
 
 {
     "20230804-seg-coco": {
@@ -294,6 +294,29 @@ class RemoteCOCO:
     def annToMask(self, ann):
         rle = self.annToRLE(ann)
         return coco_mask.decode(rle)
+    
+    def loadNumpyAnnotations(self, data):
+        """
+        Convert result data from a numpy array [Nx7] where each row contains {imageID,x1,y1,w,h,score,class}
+        :param  data (numpy.ndarray)
+        :return: annotations (python nested list)
+        """
+        print('Converting ndarray to lists...')
+        assert(type(data) == np.ndarray)
+        print(data.shape)
+        assert(data.shape[1] == 7)
+        N = data.shape[0]
+        ann = []
+        for i in range(N):
+            if i % 1000000 == 0:
+                print('{}/{}'.format(i,N))
+            ann += [{
+                'image_id'  : int(data[i, 0]),
+                'bbox'  : [ data[i, 1], data[i, 2], data[i, 3], data[i, 4] ],
+                'score' : data[i, 5],
+                'category_id': int(data[i, 6]),
+                }]
+        return ann
 
     def loadRes(self, resFile):
         """

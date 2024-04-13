@@ -2,10 +2,10 @@ from sqlalchemy import create_engine, Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import *
 from minio import Minio
-from cocoman.mycoco import LocalCOCO
-from cocoman.tables import Image, Category, Annotation, DataSet
-from cocoman.utils import dumpRLE, object_exists,create_db_engine,create_minio
-from cocoman.settings import (
+from cocoman.client import LocalCOCO
+from cocoman.common.tables import Image, Category, Annotation, DataSet
+from cocoman.common.utils import dumpRLE, object_exists, create_db_engine, create_minio
+from cocoman.common.settings import (
     MINIO_ACCESS_KEY,
     MINIO_SECRET_KEY,
     MINIO_URL,
@@ -14,7 +14,6 @@ from cocoman.settings import (
     DB_POOL_SIZE,
 )
 
-import argparse
 from tqdm import tqdm
 import logging
 
@@ -113,59 +112,3 @@ def upload(coco: LocalCOCO, engine: Engine, minio: Minio):
             except Exception as e:
                 logging.error(e, exc_info=True)
                 session.rollback()
-
-
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("command", help="command to run", choices=["upload"])
-    parser.add_argument(
-        "--db-url", default=DB_URL, help="{username}:{password}@{host}:{port}/{db} format postgres db url"
-    )
-    parser.add_argument("--minio-url", default=MINIO_URL, help="minio endpoint url")
-    parser.add_argument(
-        "--minio-access-key",
-        default=MINIO_ACCESS_KEY,
-        help="minio access key alias username",
-    )
-    parser.add_argument(
-        "--minio-secret-key",
-        default=MINIO_SECRET_KEY,
-        help="minio secret key alias password",
-    )
-    parser.add_argument(
-        "--minio-ssl",
-        action="store_true",
-        default=MINIO_SSL,
-        help="minio enable ssl protocol",
-    )
-    parser.add_argument(
-        "--annotation-file", required=True, help="coco annotation file path"
-    )
-    parser.add_argument("--img-dir", required=True, help="coco image dir path")
-    parser.add_argument(
-        "--dataset-type",
-        required=True,
-        help="coco dataset type",
-        choices=["train", "val", "test"],
-    )
-    parser.add_argument("--dataset-name", required=True, help="coco dataset name")
-    return parser.parse_args()
-
-
-def cmd_entrypoint(args):
-    engine = create_db_engine(args.db_url, pool_size=DB_POOL_SIZE)
-
-    minio = create_minio(
-        args.minio_url,
-        minio_access_key=args.minio_access_key,
-        minio_secret_key=args.minio_secret_key,
-        ssl=args.minio_ssl,
-    )
-
-    upload(
-        LocalCOCO(
-            args.dataset_name, args.dataset_type, args.annotation_file, args.img_dir
-        ),
-        engine,
-        minio,
-    )

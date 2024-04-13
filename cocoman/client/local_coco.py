@@ -9,7 +9,7 @@ class LocalCOCO(MSCOCO):
         super().__init__(annotation_file)
         self.dataset_name = dataset_name
         self.annotation_file = annotation_file
-        self.image_dir = Path(image_dir)
+        self.image_dir = Path(image_dir) if image_dir else None
         self.dataset_type = dataset_type
 
     def getImgPaths(self, imgIds: list[int] | int):

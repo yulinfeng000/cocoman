@@ -1,0 +1,40 @@
+version: '3.1'
+
+services:
+  mongo:
+    image: mongo
+    container_name: cocoman-mongo
+    restart: always
+    ports:
+      - '27017:27017'
+    volumes:
+      - ./data/mongo:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+
+  minio:
+    image: quay.io/minio/minio
+    container_name: cocoman-minio
+    ports:
+      - '9900:9000'
+      - '9901:9001'
+    volumes:
+      - ./data/minio:/data
+    environment:
+      - MINIO_ROOT_USER=tomcat
+      - MINIO_ROOT_PASSWORD=tomcatisroot
+    command: server /data --console-address ":9001"
+
+  cocoman:
+    image: cam/cocoman-server:0.1
+    container_name: cocoman-server
+    ports:
+      - 8899:80
+    environment:
+      MINIO_URL: "localhost:9000"
+      MINIO_ACCESS_KEY: "tomcat"
+      MINIO_SECRET_KEY: "tomcatisroot"
+      MONGO_DB_URL: "mongodb://root:password@localhost:27017/mycoco?authSource=admin"
+      MONGO_DB_NAME: "mycoco"
+  
