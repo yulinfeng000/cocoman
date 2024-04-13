@@ -9,11 +9,9 @@ from sqlalchemy import create_engine as _create_engine
 from sqlalchemy.sql import expression
 from sqlalchemy.ext.compiler import compiles
 from pymongo import MongoClient
-from cocoman.client.rpc_coco import RPCRemoteCOCOClient
 import bson
 import orjson
 from motor.motor_asyncio import AsyncIOMotorClient
-import aiofiles
 
 def dumpRLE(rle) -> str:
     rle["counts"] = base64.b64encode(rle["counts"]).decode("utf-8")
@@ -93,10 +91,6 @@ def create_mongo_db(url: str, db_name: str):
 
 def create_mongodb_db_async(url: str, db_name: str):
     return AsyncIOMotorClient(url).get_database(db_name)
-
-
-def create_rpc_client(url: str):
-    return RPCRemoteCOCOClient(connect_to=url)
 
 
 class AdvJSONEncoder(json.JSONEncoder):

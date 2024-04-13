@@ -3,7 +3,6 @@ from cocoman.client import LocalCOCO
 from cocoman.common.utils import (
     create_db_engine,
     create_minio,
-    create_rpc_client,
     create_mongo_db,
 )
 from cocoman.common.settings import (

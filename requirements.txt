@@ -60,6 +60,3 @@ typing_extensions
 urllib3
 uvicorn
 yarl
-zerorpc
-zope.event
-zope.interface
