@@ -1,10 +1,10 @@
 import json
-from typing import Dict, List
+from typing import List
 import itertools
-import requests
-from pycocotools import mask as coco_mask
 from urllib.parse import urljoin
 import tempfile
+import requests
+from pycocotools import mask as coco_mask
 from pycocotools.coco import COCO as MSCOCO
 
 

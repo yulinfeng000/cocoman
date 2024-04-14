@@ -3,7 +3,6 @@ from urllib.parse import urljoin
 import requests
 from tqdm import tqdm
 from cocoman.client.local_coco import LocalCOCO
-import aiohttp
 from concurrent.futures import ThreadPoolExecutor, wait, as_completed
 from fastapi.encoders import jsonable_encoder
 

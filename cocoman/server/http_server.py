@@ -48,9 +48,6 @@ async def lifespan(app: FastAPI):
     app.state.mongo = create_mongodb_db_async(url=MONGO_DB_URL, db_name=MONGO_DB_NAME)
     yield
     app.state.thread_pool.shutdown()
-    del app.state.mongo
-    del app.state.minio
-    print("shutdown process pool")
 
 
 app = FastAPI(lifespan=lifespan, default_response_class=ORJSONResponse)
@@ -114,6 +111,18 @@ class UploadDatasetReq(BaseModel):
     dataset_name: str
     dataset_type: str
     image_ids: List[str]
+
+@app.middleware("http")
+async def middleware(req: Request, call_next):
+    # Load the ML model
+    MINIO.set(app.state.minio)
+    MONGO_DB.set(app.state.mongo)
+    EXECUTOR.set(app.state.thread_pool)
+    return await call_next(req)
+
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 
 
 async def get_images_by_config(
@@ -196,18 +205,6 @@ async def get_images_by_config(
 
         else:
             raise NotImplementedError(f"policy type {policy_type} not implemented")
-
-
-@app.middleware("http")
-async def middleware(req: Request, call_next):
-    # Load the ML model
-    MINIO.set(app.state.minio)
-    MONGO_DB.set(app.state.mongo)
-    EXECUTOR.set(app.state.thread_pool)
-    return await call_next(req)
-
-
-app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 async def _loadByType(
