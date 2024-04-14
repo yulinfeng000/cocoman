@@ -22,21 +22,24 @@ from cocoman.cmd.uploader_handles import (
 )
 import argparse
 import logging
-
+from typing import Optional
 logger = logging.getLogger("cocoman.cmd.uploader")
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("command", help="command to run", choices=["upload"])
+def get_args(parser:Optional[argparse.ArgumentParser]=None):
+    if parser is None:
+        parser = argparse.ArgumentParser(description="上传数据集的工具")
+    else:
+        parser.description = "上传数据集的工具"
     parser.add_argument(
         "--backend", default="http", choices=["mongo", "postgres", "http"]
     )
     parser.add_argument(
         "--db-url",
         default=DB_URL,
-        help="{username}:{password}@{host}:{port}/{db} format postgres db url",
+        help="{username}:{password}@{host}:{port}/{db} format postgres db url or mongo url",
     )
+    parser.add_argument("--db-name",default=MONGO_DB_NAME, help='mongodb dbname')
     parser.add_argument("--minio-url", default=MINIO_URL, help="minio endpoint url")
     parser.add_argument(
         "--minio-access-key",
@@ -68,7 +71,7 @@ def get_args():
         choices=["train", "val", "test"],
     )
     parser.add_argument("--dataset-name", required=True, help="coco dataset name")
-    return parser.parse_args()
+    return parser
 
 
 def cmd_entrypoint(args):
@@ -86,7 +89,7 @@ def cmd_entrypoint(args):
 
     if args.backend == "mongo":
         mongo_handler.upload(
-            coco=cocoapi, db=create_mongo_db(MONGO_DB_URL, MONGO_DB_NAME), minio=minio
+            coco=cocoapi, db=create_mongo_db(args.db_url, args.db_name), minio=minio
         )
 
     elif args.backend == "postgres":

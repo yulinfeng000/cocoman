@@ -21,7 +21,7 @@ from pycocotools import mask as coco_mask
 from pycocotools.coco import COCO as MSCOCO
 from cocoman.common.tables import Image, DataSet, Annotation, Category, Base
 from cocoman.common.utils import array_sample, loadRLE
-from cocoman.client.pycococreatetools import binary_mask_to_polygon
+from cocoman.common.pycococreatetools import binary_mask_to_polygon
 
 
 PYTHON_VERSION = sys.version_info[0]

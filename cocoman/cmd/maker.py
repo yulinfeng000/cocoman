@@ -6,6 +6,7 @@
 # PROJECT_ROOT = "../../"
 # import sys
 # sys.path.append(PROJECT_ROOT)
+from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 import os
@@ -35,70 +36,89 @@ from cocoman.client import (
 import traceback
 import logging
 
-logger = logging.getLogger('cocoman.cmd.maker')
+logger = logging.getLogger("cocoman.cmd.maker")
 
-def readme_template(args,io:TextIOWrapper=None,statistic=None):
-    def write_pair(io,k,v):
-        io.write("{0:{1}<10}:{2}\n".format(k,chr(12288),v))
+
+def readme_template(args, io: TextIOWrapper = None, statistic=None):
+    def write_pair(io, k, v):
+        io.write("{0:{1}<10}:{2}\n".format(k, chr(12288), v))
+
     if not io:
         io = sys.stdout
     io.write(f"Chromosome COCO Datasets\n\n\n")
-    write_pair(io,"数据集名称",args.dataset_name)
-    write_pair(io,"制备时间",datetime.now().strftime('%Y-%M-%d %H:%M:%S'))
-    write_pair(io,"中期图路径",os.path.abspath(args.metaphase))
-    write_pair(io,"掩码图路径",os.path.abspath(args.mask))
-    write_pair(io,"染色体是否多类别标签",args.multi_cls
-    )
-    write_pair(io,"是否为旋转矩形框",args.rotated_box)
-    write_pair(io,"数据集输出路径",os.path.abspath(args.output))
+    write_pair(io, "数据集名称", args.dataset_name)
+    write_pair(io, "制备时间", datetime.now().strftime("%Y-%M-%d %H:%M:%S"))
+    write_pair(io, "中期图路径", os.path.abspath(args.metaphase))
+    write_pair(io, "掩码图路径", os.path.abspath(args.mask))
+    write_pair(io, "染色体是否多类别标签", args.multi_cls)
+    write_pair(io, "是否为旋转矩形框", args.rotated_box)
+    write_pair(io, "数据集输出路径", os.path.abspath(args.output))
     if statistic:
         io.write("\n\n")
-        write_pair(io,"训练集样本数",statistic['num_train_sample'])
-        write_pair(io,"验证集样本数",statistic['num_val_sample'])
+        write_pair(io, "训练集样本数", statistic["num_train_sample"])
+        write_pair(io, "验证集样本数", statistic["num_val_sample"])
     # f"""
     # Chromosome COCO Datasets
 
-
     # 数据集名称:             {args.dataset_name}
     # 制备时间:               {datetime.now().strftime("%Y-%M-%d %H:%M:%S")}
-    
 
     # 中期图路径:             {os.path.abspath(args.metaphase)}
     # 掩码图路径:             {os.path.abspath(args.mask)}
     # 染色体是否多类别标签:     {args.multi_cls}
     # 是否为旋转矩形框:        {args.rotated_box}
 
-
     # 数据集输出路径:          {os.path.abspath(args.output)}
     # """
-    
+
     # if statistic:
     #     temp += f"""
-        
+
     #     # 训练集样本数:           {statistic['num_train_sample']}
     #     # 验证集样本数:           {statistic['num_val_sample']}
     #     # """
     # return temp
 
-def get_args():
-    parser = ArgumentParser(
-        description="""
-    制作chromosome—coco数据集命令行工具
-    """
-    )
-    parser.add_argument("command",help='command',choices=['make'])
-    parser.add_argument("--dataset-name",help="要生成的数据集名字")
+
+def get_args(parser: Optional[ArgumentParser] = None):
+    if parser is None:
+        parser = ArgumentParser(
+            description="制作chromosome—coco数据集命令行工具"
+        )
+    else:
+        parser.description = "制作chromosome—coco数据集命令行工具"
+    parser.add_argument("--dataset-name", help="要生成的数据集名字")
     parser.add_argument("--metaphase", required=True, help="中期图存放的位置")
     parser.add_argument("--mask", required=True, help="mask存放的位置")
     parser.add_argument("--output", required=True, help="生成的coco数据集存放的位置")
     parser.add_argument(
         "--rotated-box", action="store_true", default=False, help="是否生成旋转矩形框"
     )
-    parser.add_argument("--multi-cls", action="store_true", default=False, help="是否生成为多分类")
-    parser.add_argument("--pic-suffix",choices=["jpg","png",],default="png",help="中期图的后缀")
-    parser.add_argument("--mask-fname-format",choices=["huaxi","taiwan",],default="huaxi",help="mask文件名的格式")
-    parser.add_argument("--verbose",action="store_true",default=False,help="是否打印详细信息")
-    return parser.parse_args()
+    parser.add_argument(
+        "--multi-cls", action="store_true", default=False, help="是否生成为多分类"
+    )
+    parser.add_argument(
+        "--pic-suffix",
+        choices=[
+            "jpg",
+            "png",
+        ],
+        default="png",
+        help="中期图的后缀",
+    )
+    parser.add_argument(
+        "--mask-fname-format",
+        choices=[
+            "huaxi",
+            "taiwan",
+        ],
+        default="huaxi",
+        help="mask文件名的格式",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", default=False, help="是否打印详细信息"
+    )
+    return parser
 
 
 def search_pic(root_pics_dir, suffix="png"):
@@ -111,11 +131,11 @@ def search_pic(root_pics_dir, suffix="png"):
     return data
 
 
-def mask_info(mask_fname:str,format:str):
+def mask_info(mask_fname: str, format: str):
 
     if format == "huaxi":
         case_id, serial_id, stage, chromo_info, suffix = mask_fname.split(".")
-            # 几号染色体,在一张图中的编号
+        # 几号染色体,在一张图中的编号
         chromo, cid = chromo_info.split("_")
         return case_id, serial_id, stage, chromo, cid, suffix
 
@@ -124,7 +144,8 @@ def mask_info(mask_fname:str,format:str):
         chromo, cid = chromo_info.split("_")
         return case_id, 0, stage, chromo, cid, suffix
 
-def find_masks(root_masks_dir, pic_id, chromo_start_from=0,format="huaxi"):
+
+def find_masks(root_masks_dir, pic_id, chromo_start_from=0, format="huaxi"):
     """
     format: [huaxi,taiwan]
     """
@@ -147,12 +168,15 @@ def find_masks(root_masks_dir, pic_id, chromo_start_from=0,format="huaxi"):
     for mask_path in glob.glob(os.path.join(case_mask_dir, f"{pic_id}*")):
         mask_fname = os.path.basename(mask_path)
         # 病例id,图片的序列id,阶段,mask所代表的染色体信息,图片后缀
-        case_id, serial_id, stage, chromo, cid, suffix = mask_info(mask_fname,format=format)
+        case_id, serial_id, stage, chromo, cid, suffix = mask_info(
+            mask_fname, format=format
+        )
         # TODO 后续增加对mar类型的处理
         if chromo == "mar":
             continue
         result[c_idx(chromo)].append(mask_path)
     return result
+
 
 def create_rotated_annotation_info(
     annotation_id,
@@ -176,7 +200,9 @@ def create_rotated_annotation_info(
         return None
 
     if bounding_box is None:
-        bounding_box,area = mask2rotated_box(binary_mask) # maskutils.toBbox(binary_mask_encoded)
+        bounding_box, area = mask2rotated_box(
+            binary_mask
+        )  # maskutils.toBbox(binary_mask_encoded)
 
     if category_info["is_crowd"]:
         is_crowd = 1
@@ -202,7 +228,9 @@ def create_rotated_annotation_info(
     return annotation_info
 
 
-def generate_annotation_json(root_pics_dir, root_mask_dir, suffix="png",maskfname_format="huaxi"):
+def generate_annotation_json(
+    root_pics_dir, root_mask_dir, suffix="png", maskfname_format="huaxi"
+):
 
     annotation_idgen = itertools.count(start=1)
     # 分类信息生成
@@ -230,7 +258,7 @@ def generate_annotation_json(root_pics_dir, root_mask_dir, suffix="png",maskfnam
         )
         images.append(img_info)
 
-        masks = find_masks(root_mask_dir, pic_id,format=maskfname_format)
+        masks = find_masks(root_mask_dir, pic_id, format=maskfname_format)
 
         for chromo, masks_paths in masks.items():
             for mask_path in masks_paths:
@@ -270,7 +298,9 @@ def mask2rotated_box(mask: np.ndarray):
     return [cx, cy, w, h, theta], w * h
 
 
-def generate_annotation_json_single_cls(root_pics_dir, root_mask_dir, suffix="png",mask_fname_format="huaxi"):
+def generate_annotation_json_single_cls(
+    root_pics_dir, root_mask_dir, suffix="png", mask_fname_format="huaxi"
+):
     annotation_idgen = itertools.count(start=1)
     # 分类信息生成
     categories = [
@@ -296,7 +326,7 @@ def generate_annotation_json_single_cls(root_pics_dir, root_mask_dir, suffix="pn
         )
         images.append(img_info)
 
-        masks = find_masks(root_mask_dir, pic_id,format=mask_fname_format)
+        masks = find_masks(root_mask_dir, pic_id, format=mask_fname_format)
 
         for chromo, masks_paths in masks.items():
             for mask_path in masks_paths:
@@ -316,14 +346,7 @@ def generate_annotation_json_single_cls(root_pics_dir, root_mask_dir, suffix="pn
 
 
 # multiprocess task worker
-def task_worker(
-    annotation_id,
-    img_idx,
-    img_size,
-    chromo,
-    mask_path,
-    gen_mask_fn
-):
+def task_worker(annotation_id, img_idx, img_size, chromo, mask_path, gen_mask_fn):
     mask = cv2.imread(mask_path)
     bin_mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
     mask_info = gen_mask_fn(
@@ -336,8 +359,16 @@ def task_worker(
     return mask_info
 
 
-def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="png",gen_mask_fn=create_annotation_info,mask_fname_format="huaxi"):
-    logger.debug(f"use multiprocess_generate_annotation_json func, gen_mask_fn:{create_annotation_info.__name__}")
+def multiprocess_generate_annotation_json(
+    root_pics_dir,
+    root_mask_dir,
+    suffix="png",
+    gen_mask_fn=create_annotation_info,
+    mask_fname_format="huaxi",
+):
+    logger.debug(
+        f"use multiprocess_generate_annotation_json func, gen_mask_fn:{create_annotation_info.__name__}"
+    )
     annotation_idgen = itertools.count(start=1)
     # 分类信息生成
     categories = [
@@ -354,7 +385,8 @@ def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="
     tasks = []
     with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
         for img_idx, (pic_id, pic_path) in enumerate(
-            tqdm(search_pic(root_pics_dir, suffix=suffix), desc="提交并行任务中"), start=1
+            tqdm(search_pic(root_pics_dir, suffix=suffix), desc="提交并行任务中"),
+            start=1,
         ):
             img = Image.open(pic_path)
             img_info = create_image_info(
@@ -364,7 +396,7 @@ def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="
             )
             images.append(img_info)
 
-            masks = find_masks(root_mask_dir, pic_id,format=mask_fname_format)
+            masks = find_masks(root_mask_dir, pic_id, format=mask_fname_format)
             for chromo, masks_paths in masks.items():
                 for mask_path in masks_paths:
                     tasks.append(
@@ -376,17 +408,17 @@ def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="
                             img_size=img.size,
                             chromo=chromo,
                             mask_path=mask_path,
-                            gen_mask_fn=gen_mask_fn
+                            gen_mask_fn=gen_mask_fn,
                         )
                     )
 
         with tqdm(total=len(tasks)) as pbar:
-            for future in as_completed(tasks):        
-                try:        
+            for future in as_completed(tasks):
+                try:
                     ann_info = future.result()
                 except Exception as e:
                     print(e)
-                    return 
+                    return
                 if ann_info:
                     annotations.append(ann_info)
                 pbar.update(1)
@@ -395,9 +427,15 @@ def multiprocess_generate_annotation_json(root_pics_dir, root_mask_dir, suffix="
 
 
 def multiprocess_generate_annotation_json_single_cls(
-    root_pics_dir, root_mask_dir, suffix="png",gen_mask_fn=create_annotation_info,mask_fname_format="huaxi"
-):  
-    logger.debug(f"use multiprocess_generate_annotation_json_single_cls func, gen_mask_fn:{create_annotation_info.__name__}")
+    root_pics_dir,
+    root_mask_dir,
+    suffix="png",
+    gen_mask_fn=create_annotation_info,
+    mask_fname_format="huaxi",
+):
+    logger.debug(
+        f"use multiprocess_generate_annotation_json_single_cls func, gen_mask_fn:{create_annotation_info.__name__}"
+    )
     annotation_idgen = itertools.count(start=1)
     # 分类信息生成
     categories = [
@@ -415,7 +453,8 @@ def multiprocess_generate_annotation_json_single_cls(
     with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
         #
         for img_idx, (pic_id, pic_path) in enumerate(
-            tqdm(search_pic(root_pics_dir, suffix=suffix), desc="提交并行任务中"), start=1
+            tqdm(search_pic(root_pics_dir, suffix=suffix), desc="提交并行任务中"),
+            start=1,
         ):
             img = Image.open(pic_path)
             img_info = create_image_info(
@@ -425,7 +464,7 @@ def multiprocess_generate_annotation_json_single_cls(
             )
             images.append(img_info)
 
-            masks = find_masks(root_mask_dir, pic_id,format=mask_fname_format)
+            masks = find_masks(root_mask_dir, pic_id, format=mask_fname_format)
             for chromo, masks_paths in masks.items():
                 for mask_path in masks_paths:
                     tasks.append(
@@ -437,28 +476,31 @@ def multiprocess_generate_annotation_json_single_cls(
                             img_size=img.size,
                             chromo=1,  # 单分类染色体类别id为1
                             mask_path=mask_path,
-                            gen_mask_fn=gen_mask_fn
+                            gen_mask_fn=gen_mask_fn,
                         )
                     )
 
         with tqdm(total=len(tasks), desc="并行任务执行中") as pbar:
             for future in as_completed(tasks):
                 if future.exception():
-                    traceback.print_exception(future.exception()) # traceback.format_tb(future.exception().__traceback__)
+                    traceback.print_exception(
+                        future.exception()
+                    )  # traceback.format_tb(future.exception().__traceback__)
                 else:
                     ann_info = future.result()
                     if ann_info:
                         annotations.append(ann_info)
-         
+
                 pbar.update(1)
-              
 
     return dict(images=images, categories=categories, annotations=annotations)
 
 
-def split_and_move_pics(root_pic_dir, train_dir=None, val_dir=None,do_copy_inplace=True,pic_suffix="png"):
+def split_and_move_pics(
+    root_pic_dir, train_dir=None, val_dir=None, do_copy_inplace=True, pic_suffix="png"
+):
     # 2/3 train  1/3 val
-    pics = search_pic(root_pic_dir,suffix=pic_suffix)
+    pics = search_pic(root_pic_dir, suffix=pic_suffix)
     print("num of pics:", len(pics))
     train, val = train_test_split(
         pics,
@@ -469,8 +511,9 @@ def split_and_move_pics(root_pic_dir, train_dir=None, val_dir=None,do_copy_inpla
             shutil.copy(t, os.path.join(train_dir, os.path.basename(t)))
         for _, v in val:
             shutil.copy(v, os.path.join(val_dir, os.path.basename(v)))
-    
-    return train,val
+
+    return train, val
+
 
 def dump_annotation(annotation_dir, fname, data):
     os.makedirs(annotation_dir, exist_ok=True)
@@ -484,49 +527,53 @@ def cmd_entrypoint(args):
     """
     if args.verbose:
         logger.setLevel(logging.DEBUG)
-    
+
     DATASET_NAME = args.dataset_name
     PIC_ROOT_DIR = args.metaphase
     MASK_ROOT_DIR = args.mask
     OUTPUT_DIR = args.output
-    TRAIN_DIR = os.path.join(OUTPUT_DIR, DATASET_NAME,"train")
-    VAL_DIR = os.path.join(OUTPUT_DIR,DATASET_NAME, "val")
-    ANNOTATION_DIR = os.path.join(OUTPUT_DIR,DATASET_NAME, "annotations")
+    TRAIN_DIR = os.path.join(OUTPUT_DIR, DATASET_NAME, "train")
+    VAL_DIR = os.path.join(OUTPUT_DIR, DATASET_NAME, "val")
+    ANNOTATION_DIR = os.path.join(OUTPUT_DIR, DATASET_NAME, "annotations")
     PIC_SUFFIX = args.pic_suffix
     MASKFNAME_FORMART = args.mask_fname_format
 
-    logger.debug(f"pic root dir:{PIC_ROOT_DIR}, mask root dir:{MASK_ROOT_DIR}, output dir:{OUTPUT_DIR}")
+    logger.debug(
+        f"pic root dir:{PIC_ROOT_DIR}, mask root dir:{MASK_ROOT_DIR}, output dir:{OUTPUT_DIR}"
+    )
 
     readme_template(args)
     # 创建文件夹
     for d in [TRAIN_DIR, VAL_DIR, ANNOTATION_DIR]:
         os.makedirs(d, exist_ok=True)
 
-    train,val = split_and_move_pics(PIC_ROOT_DIR, TRAIN_DIR, VAL_DIR,pic_suffix=PIC_SUFFIX)
+    train, val = split_and_move_pics(
+        PIC_ROOT_DIR, TRAIN_DIR, VAL_DIR, pic_suffix=PIC_SUFFIX
+    )
     # 记录训练集样本数量
-    s = {'num_train_sample':len(train),'num_val_sample':len(val)}
+    s = {"num_train_sample": len(train), "num_val_sample": len(val)}
     logging.info(s)
-    
+
     generate_json_func = multiprocess_generate_annotation_json_single_cls
     if args.multi_cls:
         generate_json_func = multiprocess_generate_annotation_json
 
-    partial_params={}
+    partial_params = {}
     if args.rotated_box:
-        partial_params["gen_mask_fn"]=create_rotated_annotation_info
-    partial_params.update(dict(suffix=PIC_SUFFIX,mask_fname_format=MASKFNAME_FORMART))
+        partial_params["gen_mask_fn"] = create_rotated_annotation_info
+    partial_params.update(dict(suffix=PIC_SUFFIX, mask_fname_format=MASKFNAME_FORMART))
     logger.debug(f"use generate json func: {generate_json_func.__name__}")
     logger.debug(f"generate_json_func params: {partial_params}")
-    generate_json_func = functools.partial(generate_json_func,**partial_params)
+    generate_json_func = functools.partial(generate_json_func, **partial_params)
 
     train_json = generate_json_func(TRAIN_DIR, MASK_ROOT_DIR)
-    dump_annotation(ANNOTATION_DIR, "chromosome_train.json", train_json) 
+    dump_annotation(ANNOTATION_DIR, "chromosome_train.json", train_json)
     val_json = generate_json_func(VAL_DIR, MASK_ROOT_DIR)
     dump_annotation(ANNOTATION_DIR, "chromosome_val.json", val_json)
 
-    with open(os.path.join(OUTPUT_DIR,DATASET_NAME,"README"),"w") as f:
-        readme_template(args,f,s)
-    
+    with open(os.path.join(OUTPUT_DIR, DATASET_NAME, "README"), "w") as f:
+        readme_template(args, f, s)
+
     print("Done")
 
 

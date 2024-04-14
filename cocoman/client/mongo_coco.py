@@ -11,7 +11,7 @@ from pymongo.database import Database
 from minio import Minio
 from bson import ObjectId
 from tqdm import tqdm
-from cocoman.client.pycococreatetools import binary_mask_to_polygon
+from cocoman.common.pycococreatetools import binary_mask_to_polygon
 
 PYTHON_VERSION = sys.version_info[0]
 
