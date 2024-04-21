@@ -1,11 +1,14 @@
 # COCOMAN is the Better COCO
 
+## 编译容器
+
+在项目根目录下执行`docker build --tag cam/cocoman-server:0.1 .`进行容器镜像编译
+
+## 部署
+
+在项目docker文件夹下执行`docker compose up -d` 进行容器部署
+
 ## 命令行
-
-- 制作数据集
-
-    命令行执行 `cocoman make -h` 来查看数据集制备工具命令行参数
-
 - 上传数据集
 
     命令行执行 `cocoman upload -h` 来查看数据集制备工具命令行参数

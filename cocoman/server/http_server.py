@@ -1,16 +1,21 @@
+from typing import Optional, Dict, Any, List, Union
+import os
 from collections import defaultdict
-import json
 import logging
-from typing import Optional, TypedDict, Dict, Literal, Any, List, Union
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+from pathlib import Path
+from contextvars import ContextVar
 from fastapi import FastAPI, Request, UploadFile, Form, File
-from fastapi.responses import StreamingResponse, Response, ORJSONResponse
+from fastapi.responses import StreamingResponse, ORJSONResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
-from cocoman.common.utils import (
-    create_mongodb_db_async,
-    create_minio,
-    async_dump_big_json_list_stream,
-)
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from minio import Minio
+from fastapi.middleware.gzip import GZipMiddleware
+import bson
+from bson import ObjectId
+from cocoman.common.utils import create_mongodb_db_async, create_minio
 from cocoman.common.settings import (
     MINIO_ACCESS_KEY,
     MINIO_SECRET_KEY,
@@ -19,15 +24,7 @@ from cocoman.common.settings import (
     MONGO_DB_NAME,
     MONGO_DB_URL,
 )
-from contextvars import ContextVar
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from concurrent.futures import ThreadPoolExecutor
-from minio import Minio
-import asyncio
-from fastapi.middleware.gzip import GZipMiddleware
-from cocoman.common.utils import AdvJSONEncoder
-from bson import ObjectId
-from pathlib import Path
+
 
 MONGO_DB: ContextVar[AsyncIOMotorDatabase] = ContextVar("MONGO_DB", default=None)
 MINIO: ContextVar[Minio] = ContextVar("MINIO", default=None)
@@ -38,7 +35,7 @@ logger = logging.getLogger("cocoman.server.http_server")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.thread_pool = ThreadPoolExecutor(max_workers=10)
+    app.state.thread_pool = ThreadPoolExecutor(max_workers=(2 * os.cpu_count()) + 1)
     app.state.minio = create_minio(
         minio_url=MINIO_URL,
         minio_access_key=MINIO_ACCESS_KEY,
@@ -48,6 +45,9 @@ async def lifespan(app: FastAPI):
     app.state.mongo = create_mongodb_db_async(url=MONGO_DB_URL, db_name=MONGO_DB_NAME)
     yield
     app.state.thread_pool.shutdown()
+    del app.state.mongo
+    del app.state.minio
+    print("shutdown process pool")
 
 
 app = FastAPI(lifespan=lifespan, default_response_class=ORJSONResponse)
@@ -111,18 +111,6 @@ class UploadDatasetReq(BaseModel):
     dataset_name: str
     dataset_type: str
     image_ids: List[str]
-
-@app.middleware("http")
-async def middleware(req: Request, call_next):
-    # Load the ML model
-    MINIO.set(app.state.minio)
-    MONGO_DB.set(app.state.mongo)
-    EXECUTOR.set(app.state.thread_pool)
-    return await call_next(req)
-
-
-app.add_middleware(GZipMiddleware, minimum_size=1000)
-
 
 
 async def get_images_by_config(
@@ -207,6 +195,18 @@ async def get_images_by_config(
             raise NotImplementedError(f"policy type {policy_type} not implemented")
 
 
+@app.middleware("http")
+async def middleware(req: Request, call_next):
+    # Load the ML model
+    MINIO.set(app.state.minio)
+    MONGO_DB.set(app.state.mongo)
+    EXECUTOR.set(app.state.thread_pool)
+    return await call_next(req)
+
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
 async def _loadByType(
     db: AsyncIOMotorDatabase, collection: str, ids: List[ObjectId] = []
 ) -> List[Dict]:
@@ -233,7 +233,7 @@ async def _loadByTypeStream(
             {"$project": {"_id": 0}},
         ]
     ):
-        yield item
+        yield bson.BSON.encode(item)
 
 
 @app.post("/createIndex")
@@ -266,11 +266,7 @@ async def createIndex(req: CreateRemoteIndexReq):
         "anns": anns,
         "cats": cats,
     }
-
-    return Response(
-        json.dumps(results, cls=AdvJSONEncoder),
-        headers={"Content-Type": "application/json"},
-    )
+    return results
 
 
 @app.post("/getAnnIds")
@@ -363,11 +359,11 @@ async def loadAnns(req: LoadCommonItemReq) -> List[Dict]:
                 },
             ]
         ):
-            yield item
+            yield bson.BSON.encode(item)
 
     return StreamingResponse(
-        async_dump_big_json_list_stream(generator()),
-        headers={"Content-Type": "application/json"},
+        generator(),
+        headers={"Content-Type": "application/bson"},
     )
 
 
@@ -397,8 +393,8 @@ async def loadCats(req: LoadCommonItemReq) -> List[Dict]:
     ids = [ObjectId(i) for i in req.ids]
     generator = _loadByTypeStream(MONGO_DB.get(), "categories", ids)
     return StreamingResponse(
-        async_dump_big_json_list_stream(generator),
-        headers={"Content-Type": "application/json"},
+        generator,
+        headers={"Content-Type": "application/bson"},
     )
 
 
@@ -413,8 +409,8 @@ async def loadImgs(req: LoadCommonItemReq) -> List[Dict]:
     ids = [ObjectId(i) for i in req.ids]
     generator = _loadByTypeStream(MONGO_DB.get(), "images", ids)
     return StreamingResponse(
-        async_dump_big_json_list_stream(generator),
-        headers={"Content-Type": "application/json"},
+        generator,
+        headers={"Content-Type": "application/bson"},
     )
 
 

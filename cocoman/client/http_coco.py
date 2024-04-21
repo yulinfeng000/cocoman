@@ -1,11 +1,15 @@
 import json
 from typing import List
 import itertools
-from urllib.parse import urljoin
-import tempfile
+from functools import wraps
 import requests
 from pycocotools import mask as coco_mask
+from urllib.parse import urljoin
+import tempfile
 from pycocotools.coco import COCO as MSCOCO
+import io
+from PIL import Image
+import bson
 
 
 def _isArrayLike(obj):
@@ -17,6 +21,8 @@ def _isArrayLike(obj):
 
 
 def cache(fn):
+
+    @wraps(fn)
     def fn_warp(self, *args, **kwargs):
         if self._local_coco is not None:
             return getattr(self._local_coco, fn.__name__)(*args, **kwargs)
@@ -42,9 +48,9 @@ class RemoteCOCO(object):
             raise requests.exceptions.HTTPError(response=resp)
 
     def _call_remote_stream(self, uri, payload):
-        resp = self.client.post(urljoin(self.base_url, uri), json=payload)
+        resp = self.client.post(urljoin(self.base_url, uri), json=payload, stream=True)
         if resp.status_code == 200:
-            return resp.iter_content()
+            return resp.iter_content(None)
         else:
             raise requests.exceptions.HTTPError(response=resp)
 
@@ -134,11 +140,19 @@ class RemoteCOCO(object):
         if not _isArrayLike(ids):
             ids = [ids]
 
+        results = []
         with tempfile.TemporaryFile() as tmp:
             for content in self._call_remote_stream(api, dict(ids=ids)):
                 tmp.write(content)
             tmp.seek(0)
-            return json.load(tmp)
+
+            while head := tmp.read(4):
+                size = int.from_bytes(head, "little")
+                tmp.seek(-4, 1)
+                doc = bson.BSON(tmp.read(size)).decode()
+                results.append(doc)
+
+        return results
 
     @cache
     def loadAnns(self, ids=[]):
@@ -160,12 +174,27 @@ class RemoteCOCO(object):
     def annToMask(self, ann):
         return coco_mask.decode(ann["segmentation"])
 
+    def getImgPic(self, img) -> Image.Image:
+        imgId = img if isinstance(img, str) else img["id"]
+        f = io.BytesIO()
+        with self.client.post(
+            urljoin(self.base_url, "/getImgPic"),
+            json=dict(imgId=imgId),
+            stream=True,
+        ) as resp:
+            for content in resp.iter_content(None):
+                f.write(content)
+        return Image.open(f)
+
     def saveImgPic(self, img, location):
+        imgId = img if isinstance(img, str) else img["id"]
         with open(location, "wb") as f:
             with self.client.post(
-                urljoin(self.base_url, "/getImgPic"), json=dict(imgId=img["id"])
+                urljoin(self.base_url, "/getImgPic"),
+                json=dict(imgId=imgId),
+                stream=True,
             ) as resp:
-                for content in resp.iter_content():
+                for content in resp.iter_content(None):
                     f.write(content)
 
     def localization(self):
